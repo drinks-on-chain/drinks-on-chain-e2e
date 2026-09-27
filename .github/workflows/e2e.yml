@@ -1,0 +1,133 @@
+name: E2E
+
+# Recorridos de los hitos contra el entorno de desarrollo (plan/04 §5). Las apps se construyen
+# aquí mismo desde sus repos públicos, SIN mocks y con API_ORIGIN = backend de desarrollo, y se
+# sirven con `next start` en puertos locales (ERP 3102, Backoffice 3103): no dependen de las
+# previews de Vercel (protegidas con SSO). Los correos se leen en Mailpit por ssh con una llave de
+# comando forzado (solo `GET /api/v1/<ruta>` y `DELETE /api/v1/messages`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      specs:
+        description: "Recorridos (filtro de Playwright: h0-, h1-, 'h0- h1-'; vacío = todos)"
+        required: false
+        default: "h0-"
+      erp_ref:
+        description: "Rama o etiqueta del ERP"
+        required: false
+        default: dev
+      backoffice_ref:
+        description: "Rama o etiqueta del Backoffice"
+        required: false
+        default: dev
+      api_origin:
+        description: "Origen del backend"
+        required: false
+        default: https://136.243.223.39.sslip.io
+  # Disparo desde otros repos o desde la coordinación al cerrar una ola:
+  #   gh api repos/drinks-on-chain/drinks-on-chain-e2e/dispatches -f event_type=e2e \
+  #     -F 'client_payload[specs]=h1-' -F 'client_payload[erp_ref]=dev'
+  repository_dispatch:
+    types: [e2e]
+  # Diario (solo H0, que no crea datos). Se activa con la variable del repo E2E_DAILY=1.
+  schedule:
+    - cron: "30 10 * * *"
+
+concurrency:
+  # Nunca dos ejecuciones a la vez contra el mismo entorno (límites por IP y datos compartidos).
+  group: e2e-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    if: github.event_name != 'schedule' || vars.E2E_DAILY == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: "true"
+      SPECS: ${{ github.event_name == 'schedule' && 'h0-' || inputs.specs || github.event.client_payload.specs || '' }}
+      E2E_REF_ERP: ${{ inputs.erp_ref || github.event.client_payload.erp_ref || 'dev' }}
+      E2E_REF_BACKOFFICE: ${{ inputs.backoffice_ref || github.event.client_payload.backoffice_ref || 'dev' }}
+      E2E_API_ORIGIN: ${{ inputs.api_origin || github.event.client_payload.api_origin || 'https://136.243.223.39.sslip.io' }}
+      E2E_MAILPIT_SSH: e2e-mailpit
+      E2E_MAILPIT_SSH_MODE: api
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prefijo de la ejecución y apps necesarias
+        run: |
+          echo "E2E_RUN_ID=e2e-$(date -u +%Y%m%dt%H%M)-${GITHUB_RUN_ID: -6}" >> "$GITHUB_ENV"
+          # H0 solo necesita el ERP; el resto de recorridos, ERP y Backoffice.
+          if [ "$(echo "$SPECS" | xargs)" = "h0-" ]; then apps=erp; else apps=erp,backoffice; fi
+          echo "E2E_APPS=$apps" >> "$GITHUB_ENV"
+
+      - name: Llave del buzón (Mailpit, comando forzado)
+        env:
+          MAILPIT_KEY: ${{ secrets.DEV_MAILPIT_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.DEV_SSH_HOST }}
+          SSH_USER: ${{ secrets.DEV_SSH_USER }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$MAILPIT_KEY" > ~/.ssh/e2e_mailpit
+          chmod 600 ~/.ssh/e2e_mailpit
+          printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          {
+            echo "Host e2e-mailpit"
+            echo "  HostName $SSH_HOST"
+            echo "  User $SSH_USER"
+            echo "  IdentityFile ~/.ssh/e2e_mailpit"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  BatchMode yes"
+          } >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          ssh e2e-mailpit "GET /api/v1/info" > /dev/null
+          echo "Buzón accesible con la llave restringida."
+
+      - name: Construir las apps sin mocks (${{ env.E2E_APPS }})
+        run: pnpm apps prepare ${E2E_APPS//,/ } --source=github
+
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - name: Recorridos
+        env:
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+          E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
+          E2E_START_APPS: "1"
+        run: pnpm exec playwright test $SPECS
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "### E2E · $E2E_RUN_ID"
+            echo ""
+            echo "- Recorridos: \`${SPECS:-todos}\` · apps: \`$E2E_APPS\`"
+            echo "- ERP \`$E2E_REF_ERP\` · Backoffice \`$E2E_REF_BACKOFFICE\` · backend \`$E2E_API_ORIGIN\`"
+            echo "- Informe HTML y trazas en los artefactos de la ejecución."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-${{ env.E2E_RUN_ID }}
+          path: playwright-report
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: trazas-${{ env.E2E_RUN_ID }}
+          path: test-results
+          retention-days: 14
+          if-no-files-found: ignore
