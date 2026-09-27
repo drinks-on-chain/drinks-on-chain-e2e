@@ -9,10 +9,18 @@ import { fillLogin, logout, settled, shellUser, trackErrors } from "../src/lib/p
 // con la cookie, cambia de organización y lista parcelas contra el backend de desarrollo; la API
 // y el worker están sanos y el buzón de pruebas se lee con la llave restringida de CI.
 //
-// Solo lecturas: el 422 del perfil no guarda nada y no se crea ningún dato. En serie, para no
-// rozar los límites del backend (login 10/min y renovación 30/min por IP).
+// Solo lecturas: el 422 del perfil no guarda nada y no se crea ningún dato. Un solo worker (ver
+// playwright.config.ts) para no rozar los límites del backend (login 10/min por IP).
+//
+// Lo que depende de que los datos del backend cumplan el contrato (panel y lista de parcelas) se
+// comprueba con `expect.soft`: si falla, la prueba falla igual, pero sigue y comprueba el resto de
+// la sesión (renovación, 422, cierre, cambio de organización) para informar de todo a la vez.
 
-test.describe.configure({ mode: "serial" });
+/** El panel del ERP cargó sus datos (sin ErrorState por contrato roto, red o servidor). */
+async function softDashboard(page: Page) {
+  await expect.soft(page.getByText("Tareas pendientes", { exact: true }), "panel con datos del backend").toBeVisible();
+  await expect.soft(page.getByText("No se pudo cargar"), "panel sin ErrorState").toHaveCount(0);
+}
 
 const orgSelector = (page: Page) => page.getByRole("combobox", { name: "Organización activa" });
 
@@ -76,8 +84,9 @@ test("dueño de Altos: login, renovación tras recargar, parcelas, 422 por campo
     ]);
     expect(login.status()).toBe(200);
     await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
-    await expect(page.getByText("Tareas pendientes", { exact: true })).toBeVisible();
     await expect(shellUser(page)).toContainText(WINERY.altosOwner.shellLabel);
+    await settled(page);
+    await softDashboard(page);
   });
 
   await test.step("la cookie de renovación doc_rt es de primera parte y HttpOnly", async () => {
@@ -99,7 +108,6 @@ test("dueño de Altos: login, renovación tras recargar, parcelas, 422 por campo
       page.reload(),
     ]);
     expect(refresh.status()).toBe(200);
-    await expect(page.getByText("Tareas pendientes", { exact: true })).toBeVisible();
     await expect(shellUser(page)).toContainText(WINERY.altosOwner.shellLabel);
     await settled(page);
   });
@@ -114,8 +122,8 @@ test("dueño de Altos: login, renovación tras recargar, parcelas, 422 por campo
     expect(body.data.total).toBeGreaterThan(0);
     await expect(page.getByRole("heading", { level: 1, name: "Origen y terroirs" })).toBeVisible();
     await settled(page);
-    await expect(page.getByRole("link", { name: ALTOS_PARCEL })).toBeVisible();
-    await expect(page.getByText("No se pudo cargar")).toHaveCount(0);
+    await expect.soft(page.getByText("No se pudo cargar"), "lista de parcelas sin ErrorState").toHaveCount(0);
+    await expect.soft(page.getByRole("link", { name: ALTOS_PARCEL }), "parcela de la semilla").toBeVisible();
   });
 
   await test.step("un 422 del backend marca el campo exacto (details[].field)", async () => {
@@ -170,14 +178,14 @@ test("Sofía cambia de organización entre una bodega suspendida y una activa", 
   expect(switched.status()).toBe(200);
   await expect(page.getByText(`Ahora trabajas en ${ORG.altos}.`, { exact: true })).toBeVisible();
   await expect(shellUser(page)).toContainText(WINERY.sofia.shellLabel);
-  await expect(page.getByText("Tareas pendientes", { exact: true })).toBeVisible();
   await settled(page);
+  await softDashboard(page);
 
   // Permisos de la membresía activa (enóloga): lee las parcelas, no las da de alta.
   await page.getByRole("link", { name: "Origen y terroirs", exact: true }).first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Origen y terroirs" })).toBeVisible();
   await settled(page);
-  await expect(page.getByRole("link", { name: ALTOS_PARCEL })).toBeVisible();
+  await expect.soft(page.getByRole("link", { name: ALTOS_PARCEL }), "parcela de la semilla").toBeVisible();
   await expect(page.getByRole("link", { name: "Nuevo terroir" })).toHaveCount(0);
 
   // La organización elegida sobrevive a la recarga (el refresco rotado en el cambio es el vigente).
