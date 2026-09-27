@@ -1,0 +1,36 @@
+{
+  "name": "drinks-on-chain-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pruebas entre aplicaciones de Drinks on Chain (recorridos de los hitos H0–H6)",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "e2e:h0": "playwright test h0-",
+    "e2e:h1": "playwright test h1-",
+    "report": "playwright show-report",
+    "apps": "tsx scripts/apps.ts",
+    "mailbox": "tsx scripts/mailbox.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.20.4",
+    "eslint": "9.39.5",
+    "eslint-plugin-playwright": "^2.12.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.1",
+    "vitest": "5.0.1"
+  }
+}

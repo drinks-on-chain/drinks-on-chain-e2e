@@ -1,0 +1,105 @@
+// Configuración de la suite: todo sale de variables de entorno (nunca hosts ni secretos escritos en
+// las pruebas). Ver la tabla de variables del README.
+
+/** Backend de desarrollo (plan/03 §5). En la Ola 6, staging. */
+export const DEV_API_ORIGIN = "https://136.243.223.39.sslip.io";
+
+const trimSlash = (v: string) => v.trim().replace(/\/+$/, "");
+
+/** Origen del backend: las apps lo usan como API_ORIGIN y las utilidades `api` lo llaman directamente. */
+export const API_ORIGIN = trimSlash(process.env.E2E_API_ORIGIN || DEV_API_ORIGIN);
+
+export type AppName = "erp" | "backoffice" | "marketplace" | "pos" | "bodegas";
+
+export interface AppDef {
+  name: AppName;
+  /** Repo público de la organización `drinks-on-chain` (y carpeta hermana en el paraguas). */
+  repo: string;
+  /** Variable con la URL ya levantada de la app; si falta, `http://localhost:<port>`. */
+  urlVar: string;
+  /** Puerto local donde `scripts/apps.ts` la arranca con `next start` (el de desarrollo + 100). */
+  port: number;
+  /** Proyecto de Playwright activo. Los de olas futuras se activan con `E2E_ENABLE_<APP>=1`. */
+  enabledByDefault: boolean;
+  /** Recorridos (archivos de tests/) que arrancan en esta app. */
+  specs: RegExp;
+  /** Variables de build de la app contra el backend real (sin mocks). */
+  buildEnv: (urls: Record<AppName, string>) => Record<string, string>;
+}
+
+const common = { NEXT_PUBLIC_MOCKS: "0", API_ORIGIN };
+
+export const APPS: Record<AppName, AppDef> = {
+  erp: {
+    name: "erp",
+    repo: "drinks-on-chain-erp",
+    urlVar: "E2E_URL_ERP",
+    port: 3102,
+    enabledByDefault: true,
+    specs: /h0-.*\.spec\.ts$/,
+    buildEnv: () => ({ ...common }),
+  },
+  backoffice: {
+    name: "backoffice",
+    repo: "drinks-on-chain-backoffice",
+    urlVar: "E2E_URL_BACKOFFICE",
+    port: 3103,
+    enabledByDefault: true,
+    specs: /h1-.*\.spec\.ts$/,
+    buildEnv: (u) => ({ ...common, NEXT_PUBLIC_URL_ERP: u.erp }),
+  },
+  marketplace: {
+    name: "marketplace",
+    repo: "drinks-on-chain-marketplace",
+    urlVar: "E2E_URL_MARKETPLACE",
+    port: 3104,
+    enabledByDefault: false,
+    specs: /h[34]-.*\.spec\.ts$/,
+    buildEnv: () => ({ ...common }),
+  },
+  pos: {
+    name: "pos",
+    repo: "drinks-on-chain-pos",
+    urlVar: "E2E_URL_POS",
+    port: 3105,
+    enabledByDefault: false,
+    specs: /h5-.*\.spec\.ts$/,
+    buildEnv: () => ({ ...common }),
+  },
+  bodegas: {
+    name: "bodegas",
+    repo: "drinks-on-chain-front",
+    urlVar: "E2E_URL_BODEGAS",
+    port: 3100,
+    enabledByDefault: false,
+    specs: /bodegas-.*\.spec\.ts$/,
+    buildEnv: () => ({ API_ORIGIN }),
+  },
+};
+
+export const APP_NAMES = Object.keys(APPS) as AppName[];
+
+export function appUrl(app: AppName): string {
+  const def = APPS[app];
+  return trimSlash(process.env[def.urlVar] || `http://localhost:${def.port}`);
+}
+
+export function appUrls(): Record<AppName, string> {
+  return Object.fromEntries(APP_NAMES.map((a) => [a, appUrl(a)])) as Record<AppName, string>;
+}
+
+export function appEnabled(app: AppName): boolean {
+  const flag = process.env[`E2E_ENABLE_${app.toUpperCase()}`];
+  if (flag === "1") return true;
+  if (flag === "0") return false;
+  return APPS[app].enabledByDefault;
+}
+
+/** Contraseña de las personas de demostración (SEED_DEMO_PASSWORD del backend). Nunca se imprime. */
+export const DEMO_PASSWORD = process.env.E2E_PASSWORD ?? "";
+
+/** Secreto TOTP (base32) del personal de plataforma de la semilla, cuando el backend exija 2FA. */
+export const DEMO_TOTP_SECRET = (process.env.E2E_TOTP_SECRET ?? "").replace(/\s+/g, "").toUpperCase();
+
+/** Token de captcha de prueba: Cloudflare Turnstile acepta este token con sus claves de prueba. */
+export const CAPTCHA_TEST_TOKEN = process.env.E2E_CAPTCHA_TOKEN || "XXXX.DUMMY.TOKEN.XXXX";
