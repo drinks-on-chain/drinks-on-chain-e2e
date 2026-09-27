@@ -2,11 +2,11 @@
 
 Pruebas **entre aplicaciones** de Drinks on Chain: el recorrido de cada hito (H0–H6) del plan maestro contra el entorno de desarrollo, con las apps construidas **sin mocks** y los correos leídos en Mailpit. Diseño en `plan/04-calidad-y-verificacion.md` §5 del paraguas; avance en [`docs/ROADMAP.md`](docs/ROADMAP.md) y reglas en [`CLAUDE.md`](CLAUDE.md).
 
-| Recorrido                                                                                                                             | Archivo                           | Estado                                                               |
-| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
-| H0 · Integración: salud de API y worker, buzón, login con cookie, renovación, cambio de organización, parcelas, 422 por campo, cierre | `tests/h0-integracion.spec.ts`    | Ejecutable                                                           |
-| H1 · De cero a bodega con equipo (back office → solicitud → aprobación → ERP → equipo → bloqueo → alta directa → bitácoras)           | `tests/h1-alta-de-bodega.spec.ts` | `fixme` hasta que O1-BE-1 esté desplegado (lo detecta en el OpenAPI) |
-| H2–H6                                                                                                                                 | —                                 | Pendientes (una por hito)                                            |
+| Recorrido                                                                                                                             | Archivo                           | Estado                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------- |
+| H0 · Integración: salud de API y worker, buzón, login con cookie, renovación, cambio de organización, parcelas, 422 por campo, cierre | `tests/h0-integracion.spec.ts`    | Ejecutable                                                                          |
+| H1 · De cero a bodega con equipo (back office → solicitud → aprobación → ERP → equipo → bloqueo → alta directa → bitácoras)           | `tests/h1-alta-de-bodega.spec.ts` | Ejecutable (se marca `fixme` solo si el OpenAPI no declara las rutas de la Etapa 1) |
+| H2–H6                                                                                                                                 | —                                 | Pendientes (una por hito)                                                           |
 
 ## Cómo funciona
 
@@ -35,7 +35,7 @@ pnpm install
 # 1. Secretos en variables de tu proceso, sin imprimirlos
 export E2E_PASSWORD="$(ssh drinksonchain-server "sed -n 's/^SEED_DEMO_PASSWORD=//p' ~/doc-dev/.env")"
 export E2E_MAILPIT_SSH=drinksonchain-server        # buzón: ssh + curl en el servidor
-# export E2E_TOTP_SECRET=…                          # H1, cuando la semilla tenga TOTP
+export E2E_TOTP_SECRET="$(ssh drinksonchain-server "sed -n 's/^SEED_DEMO_TOTP_SECRET=//p' ~/doc-dev/.env")"
 
 # 2. Apps sin mocks (clon de la rama dev de la carpeta hermana; --source=github para GitHub)
 pnpm apps prepare erp                              # añade backoffice para H1
