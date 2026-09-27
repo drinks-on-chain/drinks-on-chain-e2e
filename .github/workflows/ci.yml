@@ -1,0 +1,36 @@
+name: CI
+
+# Calidad del propio repo: ESLint, TypeScript y las pruebas unitarias de las utilidades.
+# Los recorridos contra el entorno de desarrollo están en e2e.yml.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm format:check
+      # Los recorridos se cargan y se asignan a su proyecto (sin ejecutarlos).
+      - run: pnpm exec playwright test --list

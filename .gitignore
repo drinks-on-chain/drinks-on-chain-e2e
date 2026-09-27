@@ -1,0 +1,11 @@
+node_modules/
+.env*
+!.env.example
+# Informes y trazas de Playwright
+/playwright-report/
+/test-results/
+/blob-report/
+# Apps clonadas y construidas por scripts/apps.ts
+/.apps/
+*.tsbuildinfo
+.DS_Store
