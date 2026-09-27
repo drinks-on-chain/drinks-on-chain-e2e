@@ -11,7 +11,7 @@ Un recorrido por hito del plan maestro (`PLAN-MAESTRO.md` §3, `plan/04` §5), c
 
 ## Hitos
 
-- [ ] **H0** · Integración: salud de API y worker, buzón con la llave restringida, login con cookie `doc_rt`, renovación tras recargar, cambio de organización (bodega `SUSPENDED`), parcelas, 422 por campo, cierre de sesión (`tests/h0-integracion.spec.ts`)
+- [x] **H0** · Integración: salud de API y worker, buzón con la llave restringida, login con cookie `doc_rt`, renovación tras recargar, cambio de organización (bodega `SUSPENDED`), parcelas, 422 por campo, cierre de sesión (`tests/h0-integracion.spec.ts`) · 27-09-2026 · 96e1514 · CI E2E 36345510562 (4/4)
 - [ ] **H1** · De cero a bodega con equipo: administración → operaciones (TOTP) → solicitud pública verificada → aprobación → dueño en el ERP → enóloga → soporte bloquea a un operario (401) → alta directa → bitácoras (`tests/h1-alta-de-bodega.spec.ts`, `fixme` hasta O1-BE-1)
 - [ ] **H2** · Lote "Singani Gran Reserva 2026" de la parcela a los códigos de botella en el ERP; elusiones de candados, D.O., dictamen y número de botellas → 422 explicado en la UI; visor del Marketplace con el pasaporte real (`h2-lote-singani.spec.ts`)
 - [ ] **H3** · Tokenización en testnet: autorización de 100 botellas, aprobación, 100 NFT en el contrato, hash anclado al certificar y verificado en el visor, conciliación sin diferencias (`h3-tokenizacion.spec.ts`)
