@@ -11,15 +11,11 @@ import { fillLogin, logout, settled, shellUser, trackErrors } from "../src/lib/p
 //
 // Solo lecturas: el 422 del perfil no guarda nada y no se crea ningún dato. Un solo worker (ver
 // playwright.config.ts) para no rozar los límites del backend (login 10/min por IP).
-//
-// Lo que depende de que los datos del backend cumplan el contrato (panel y lista de parcelas) se
-// comprueba con `expect.soft`: si falla, la prueba falla igual, pero sigue y comprueba el resto de
-// la sesión (renovación, 422, cierre, cambio de organización) para informar de todo a la vez.
 
 /** El panel del ERP cargó sus datos (sin ErrorState por contrato roto, red o servidor). */
-async function softDashboard(page: Page) {
-  await expect.soft(page.getByText("Tareas pendientes", { exact: true }), "panel con datos del backend").toBeVisible();
-  await expect.soft(page.getByText("No se pudo cargar"), "panel sin ErrorState").toHaveCount(0);
+async function dashboardLoaded(page: Page) {
+  await expect(page.getByText("Tareas pendientes", { exact: true }), "panel con datos del backend").toBeVisible();
+  await expect(page.getByText("No se pudo cargar"), "panel sin ErrorState").toHaveCount(0);
 }
 
 const orgSelector = (page: Page) => page.getByRole("combobox", { name: "Organización activa" });
@@ -38,17 +34,9 @@ test("salud de la API y del worker", async ({ api }) => {
   expect(live.status).toBe(200);
   test.info().annotations.push({ type: "release", description: live.data?.release ?? "sin RELEASE_SHA" });
 
-  // El worker no expone HTTP: su latido llega a /health/ready cuando el backend lo publique
-  // (campo `worker`). Mientras tanto, el correo de prueba entregado por la cola (prueba
-  // siguiente) demuestra que el worker procesa la cola `email`.
-  const worker = ready.data?.worker;
-  if (worker === undefined) {
-    test.info().annotations.push({
-      type: "worker",
-      description: "/v1/health/ready aún no informa del worker; se comprueba por el correo entregado por la cola",
-    });
-  }
-  expect([undefined, "ok", "connected", "healthy"]).toContain(worker);
+  // El latido del worker (outbox y colas) llega en `worker: "up" | "down"`; si falta, `status`
+  // pasa a "degraded" y la comprobación de arriba ya falla.
+  expect(ready.data?.worker, "latido del worker en /v1/health/ready").toBe("up");
 });
 
 test("buzón de pruebas: el correo de prueba de Mailpit se lee con la llave del entorno", async ({ mailbox }) => {
@@ -86,7 +74,7 @@ test("dueño de Altos: login, renovación tras recargar, parcelas, 422 por campo
     await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
     await expect(shellUser(page)).toContainText(WINERY.altosOwner.shellLabel);
     await settled(page);
-    await softDashboard(page);
+    await dashboardLoaded(page);
   });
 
   await test.step("la cookie de renovación doc_rt es de primera parte y HttpOnly", async () => {
@@ -113,17 +101,13 @@ test("dueño de Altos: login, renovación tras recargar, parcelas, 422 por campo
   });
 
   await test.step("lista de parcelas desde el backend", async () => {
-    const [list] = await Promise.all([
-      page.waitForResponse((r) => new URL(r.url()).pathname === "/api/v1/terroirs" && r.request().method() === "GET"),
-      page.getByRole("link", { name: "Origen y terroirs", exact: true }).first().click(),
-    ]);
-    expect(list.status()).toBe(200);
-    const body = (await list.json()) as { data: { items: { name: string }[]; total: number } };
-    expect(body.data.total).toBeGreaterThan(0);
+    // El panel ya pidió /api/v1/terroirs y la lista puede salir de la caché de TanStack Query:
+    // se comprueba lo que se ve (cualquier respuesta ≥ 400 la recoge trackErrors).
+    await page.getByRole("link", { name: "Origen y terroirs", exact: true }).first().click();
     await expect(page.getByRole("heading", { level: 1, name: "Origen y terroirs" })).toBeVisible();
     await settled(page);
-    await expect.soft(page.getByText("No se pudo cargar"), "lista de parcelas sin ErrorState").toHaveCount(0);
-    await expect.soft(page.getByRole("link", { name: ALTOS_PARCEL }), "parcela de la semilla").toBeVisible();
+    await expect(page.getByText("No se pudo cargar"), "lista de parcelas sin ErrorState").toHaveCount(0);
+    await expect(page.getByRole("link", { name: ALTOS_PARCEL }), "parcela de la semilla").toBeVisible();
   });
 
   await test.step("un 422 del backend marca el campo exacto (details[].field)", async () => {
@@ -179,13 +163,13 @@ test("Sofía cambia de organización entre una bodega suspendida y una activa", 
   await expect(page.getByText(`Ahora trabajas en ${ORG.altos}.`, { exact: true })).toBeVisible();
   await expect(shellUser(page)).toContainText(WINERY.sofia.shellLabel);
   await settled(page);
-  await softDashboard(page);
+  await dashboardLoaded(page);
 
   // Permisos de la membresía activa (enóloga): lee las parcelas, no las da de alta.
   await page.getByRole("link", { name: "Origen y terroirs", exact: true }).first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Origen y terroirs" })).toBeVisible();
   await settled(page);
-  await expect.soft(page.getByRole("link", { name: ALTOS_PARCEL }), "parcela de la semilla").toBeVisible();
+  await expect(page.getByRole("link", { name: ALTOS_PARCEL }), "parcela de la semilla").toBeVisible();
   await expect(page.getByRole("link", { name: "Nuevo terroir" })).toHaveCount(0);
 
   // La organización elegida sobrevive a la recarga (el refresco rotado en el cambio es el vigente).
