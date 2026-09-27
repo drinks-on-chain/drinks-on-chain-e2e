@@ -19,9 +19,9 @@ import { freshTotp } from "../src/lib/totp";
 // Todo lo que crea lleva el prefijo de la ejecución (correos `<alias>+<runId>@example.test`,
 // nombres `… · <runId>`, NIT derivado); no toca a las personas ni a las bodegas de la semilla.
 //
-// test.fixme: requiere O1-BE-1 desplegado. Al empezar se consulta el OpenAPI del backend
-// (/docs-json) y, mientras falte alguna ruta de la Etapa 1, la prueba se marca fixme con la lista
-// de rutas que faltan en lugar de fallar.
+// Requiere O1-BE-1 desplegado: al empezar se consulta el OpenAPI del backend (/docs-json) y, si
+// falta alguna ruta de la Etapa 1 (p. ej. contra otro entorno), la prueba se marca fixme con la
+// lista de rutas que faltan en lugar de fallar.
 
 const H1_ROUTES = [
   "/v1/auth/mfa/verify",
@@ -181,7 +181,7 @@ test.describe("H1 · de cero a bodega con equipo", () => {
     });
 
     await test.step("una bodega envía el formulario público y verifica su correo", async () => {
-      const visitor = await api.anonymous(`${runId} formulario`);
+      const visitor = await api.anonymous(`${runId} formulario`, "PUBLIC");
       const created = await visitor.raw<{ id: string; status: string }>("POST", "/v1/public/winery-applications", {
         body: {
           legalName: `${tradeName} S.R.L.`,
@@ -202,7 +202,15 @@ test.describe("H1 · de cero a bodega con equipo", () => {
       applicationId = created.data?.id ?? "";
       expect(applicationId).not.toBe("");
 
-      const link = await mailbox.waitForLink(owner.email, { link: /verificar/ });
+      // El backend responde 202 también cuando descarta la solicitud en silencio (campo trampa,
+      // NIT ya registrado, > 3 envíos por correo o > 10 por IP en una hora): entonces no hay correo.
+      const link = await mailbox
+        .waitForLink(owner.email, { link: /\/unirse\/verificar\?token=/, timeoutMs: 90_000 })
+        .catch((error: unknown) => {
+          throw new Error(
+            `${String(error)}. Si los logs del backend dicen «ignorada por el límite por correo o IP», esta IP ya envió 10 solicitudes en la última hora (p. ej. otras suites desde la misma máquina).`,
+          );
+        });
       const verified = await visitor.raw("POST", "/v1/public/winery-applications/verify", {
         body: { token: tokenFromLink(link) },
       });

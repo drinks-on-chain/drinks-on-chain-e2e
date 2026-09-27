@@ -15,7 +15,8 @@ import { currentRunId } from "../lib/run-id";
 //   sin cookies compartidas) con la URL base de esa app.
 
 export interface ApiFactory {
-  anonymous(label?: string): Promise<ApiClient>;
+  /** Cliente sin sesión (`clientApp`: `API` por defecto, `PUBLIC` para formularios públicos). */
+  anonymous(label?: string, clientApp?: string): Promise<ApiClient>;
   /** Cliente con la sesión de `email` (contraseña de demo salvo que se indique otra). */
   as(email: string, options?: { password?: string; totpSecret?: string }): Promise<ApiClient>;
 }
@@ -52,8 +53,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   api: async ({ runId }, use) => {
     const clients: ApiClient[] = [];
     await use({
-      anonymous: async (label) => {
-        const client = await ApiClient.create(label ?? `${runId} anónimo`);
+      anonymous: async (label, clientApp) => {
+        const client = await ApiClient.create(label ?? `${runId} anónimo`, undefined, clientApp);
         clients.push(client);
         return client;
       },

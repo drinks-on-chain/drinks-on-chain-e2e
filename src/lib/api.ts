@@ -102,11 +102,14 @@ export class ApiClient {
     readonly label: string,
   ) {}
 
-  /** Cliente sin sesión. `label` identifica a la persona en los mensajes de error. */
-  static async create(label = "anónimo", origin: string = API_ORIGIN): Promise<ApiClient> {
+  /**
+   * Cliente sin sesión. `label` identifica a la persona en los mensajes de error; `clientApp` es la
+   * app de origen que registra la bitácora (`API` por defecto; `PUBLIC` para los formularios públicos).
+   */
+  static async create(label = "anónimo", origin: string = API_ORIGIN, clientApp = "API"): Promise<ApiClient> {
     const context = await request.newContext({
       baseURL: origin,
-      extraHTTPHeaders: { "X-Client-App": "API", Accept: "application/json" },
+      extraHTTPHeaders: { "X-Client-App": clientApp, Accept: "application/json" },
       ignoreHTTPSErrors: false,
     });
     return new ApiClient(context, label);
