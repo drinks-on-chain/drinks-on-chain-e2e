@@ -62,3 +62,11 @@ export function runTaxId(runId: string, salt = ""): string {
   for (const ch of `${runId}:${salt}`) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return `9${String(hash % 1_000_000_000).padStart(9, "0")}`;
 }
+
+/**
+ * Contraseña de las personas que crea una ejecución: `Pw-e2e-<aleatorio>` (≥ 10 caracteres, no
+ * común). El prefijo `Pw-e2e-` permite que el filtro de secretos (`redact`) la oculte siempre.
+ */
+export function runPassword(): string {
+  return `Pw-e2e-${randomBytes(9).toString("hex")}`;
+}
