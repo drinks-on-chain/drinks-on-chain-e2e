@@ -2,3 +2,4 @@ pnpm-lock.yaml
 playwright-report/
 test-results/
 .apps/
+e2e-summary/

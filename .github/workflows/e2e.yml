@@ -105,8 +105,12 @@ jobs:
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
           E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
           E2E_START_APPS: "1"
+          # Sin árbol de accesibilidad en error-context.md (también lo fija playwright.config.ts).
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
         run: pnpm exec playwright test $SPECS
 
+      # Ningún artefacto con datos de sesión: ni informe HTML, ni trazas, ni capturas, ni
+      # test-results/. Solo el resumen de texto filtrado por redact() (src/reporters/summary.ts).
       - name: Resumen
         if: always()
         run: |
@@ -115,19 +119,14 @@ jobs:
             echo ""
             echo "- Recorridos: \`${SPECS:-todos}\` · apps: \`$E2E_APPS\`"
             echo "- ERP \`$E2E_REF_ERP\` · Backoffice \`$E2E_REF_BACKOFFICE\` · backend \`$E2E_API_ORIGIN\`"
-            echo "- Informe HTML y trazas en los artefactos de la ejecución."
+            echo ""
+            if [ -f e2e-summary/resumen.md ]; then cat e2e-summary/resumen.md; fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: playwright-report-${{ env.E2E_RUN_ID }}
-          path: playwright-report
-          retention-days: 14
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: trazas-${{ env.E2E_RUN_ID }}
-          path: test-results
+          name: resumen-e2e-${{ env.E2E_RUN_ID }}
+          path: e2e-summary
           retention-days: 14
           if-no-files-found: ignore

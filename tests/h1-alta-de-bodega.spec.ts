@@ -2,10 +2,11 @@ import type { Page } from "@playwright/test";
 import { CAPTCHA_TEST_TOKEN, DEMO_PASSWORD, DEMO_TOTP_SECRET } from "../src/config";
 import { expect, needsDemoPassword, test } from "../src/fixtures/test";
 import { ORG, PLATFORM } from "../src/fixtures/users";
-import { missingRoutes, type LoginResult, type Membership, type Page as ListPage } from "../src/lib/api";
+import { ApiClient, missingRoutes, type LoginResult, type Membership, type Page as ListPage } from "../src/lib/api";
+import { deactivateRunAccounts } from "../src/lib/cleanup";
 import { MAILBOX_HELP, tokenFromLink } from "../src/lib/mailbox";
 import { fillLogin, settled, shellUser, trackErrors } from "../src/lib/page";
-import { runEmail, runName, runTaxId } from "../src/lib/run-id";
+import { runEmail, runName, runPassword, runTaxId } from "../src/lib/run-id";
 import { freshTotp } from "../src/lib/totp";
 
 // H1 · Alta de bodega (PLAN-MAESTRO, hito H1; contrato plan/contratos/o1-backoffice-y-bodegas.md):
@@ -45,7 +46,7 @@ const H1_ROUTES = [
 ] as const;
 
 /** Contraseña de las personas que crea la ejecución (≥ 10 caracteres, no común). */
-const NEW_PASSWORD = `Vendimia-${Date.now().toString(36)}-e2e`;
+const NEW_PASSWORD = runPassword();
 
 interface WinerySummary {
   id: string;
@@ -110,6 +111,25 @@ test.describe("H1 · de cero a bodega con equipo", () => {
       missing = await missingRoutes(H1_ROUTES);
     } catch (error) {
       openApiError = error instanceof Error ? error.message : String(error);
+    }
+  });
+
+  // Al terminar (también si la prueba falla): ninguna cuenta creada por la ejecución queda activa.
+  // Bloquea con la sesión ADMIN de demo la cuenta completa de cada persona `+<runId>@` y anula sus
+  // invitaciones pendientes.
+  test.afterAll(async ({ runId }) => {
+    if (openApiError !== null || missing.length > 0 || !DEMO_PASSWORD || !DEMO_TOTP_SECRET) return;
+    const admin = await ApiClient.create(`${runId} limpieza`);
+    try {
+      await admin.login(PLATFORM.admin.email, DEMO_PASSWORD, DEMO_TOTP_SECRET);
+      const result = await deactivateRunAccounts(admin, runId, `Fin del recorrido E2E ${runId}`);
+      console.log(
+        `Limpieza ${runId}: ${result.blocked.length} cuenta(s) bloqueadas, ${result.alreadyBlocked.length} ya bloqueadas, ${result.revokedInvitations.length} invitación(es) anuladas`,
+      );
+      expect(result.remaining, "cuentas de la ejecución que siguen activas").toEqual([]);
+    } finally {
+      await admin.logout();
+      await admin.dispose();
     }
   });
 
