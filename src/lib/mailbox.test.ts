@@ -98,6 +98,38 @@ describe("Mailbox", () => {
     expect(link).toBe("https://erp.test/invitacion/tok-m3");
   });
 
+  it("con patrón de enlace, salta el correo más reciente si no lleva ese enlace", async () => {
+    // El backend envía a la dueña, en el mismo segundo, la invitación y el aviso de solicitud
+    // aprobada (sin enlace); el aviso puede quedar como el más reciente.
+    const both = [
+      summary("aprobada", owner, "Bodega X fue aprobada", "2026-09-27T16:40:00Z"),
+      summary("invitacion", owner, "Invitación a Bodega X", "2026-09-27T16:40:00Z"),
+    ];
+    const bodies: Record<string, string> = {
+      aprobada: "Tu solicitud fue aprobada. Te llegará una invitación aparte.",
+      invitacion: "Acepta: https://erp.test/invitacion/tok-dueña",
+    };
+    const transport: MailpitTransport = {
+      kind: "ssh-api",
+      get: (path) => {
+        if (path.startsWith("/api/v1/message/")) {
+          const id = path.split("/").pop() ?? "";
+          return Promise.resolve({ ...both.find((x) => x.ID === id), Text: bodies[id], HTML: "" });
+        }
+        return Promise.resolve({ total: both.length, messages: both });
+      },
+      deleteIds: null,
+      deleteAll: () => Promise.resolve(),
+    };
+    const box = new Mailbox(transport, run);
+    await expect(box.waitForLink(owner, { link: /\/invitacion\//, timeoutMs: 0 })).resolves.toBe(
+      "https://erp.test/invitacion/tok-dueña",
+    );
+    await expect(box.waitForLink(owner, { link: /\/restablecer\//, timeoutMs: 0 })).rejects.toThrow(
+      /enlace que cumpla/,
+    );
+  });
+
   it("falla con un mensaje claro si no llega", async () => {
     const box = new Mailbox(fakeTransport(messages).transport, run);
     await expect(box.waitFor("nadie@example.test", { timeoutMs: 0 })).rejects.toThrow(/No llegó ningún correo/);

@@ -261,9 +261,33 @@ export class Mailbox {
     );
   }
 
-  /** Espera el correo y devuelve su primer enlace (o el primero que cumpla `pattern`). */
+  /**
+   * Espera el correo y devuelve su primer enlace. Con `link`, espera el correo más reciente que
+   * **contenga** un enlace que cumpla el patrón: el backend puede enviar varios correos al mismo
+   * destinatario en el mismo segundo (p. ej. la invitación del dueño y el aviso de solicitud
+   * aprobada, que no lleva enlace) y el más reciente no siempre es el que se busca.
+   */
   async waitForLink(to: string, options: WaitOptions & { link?: RegExp } = {}): Promise<string> {
-    return firstLink(await this.waitFor(to, options), options.link);
+    const { link, subject, since, timeoutMs = 60_000, pollMs = 2_000 } = options;
+    if (!link) return firstLink(await this.waitFor(to, options));
+    const deadline = Date.now() + timeoutMs;
+    let last: MailSummary[] = [];
+    for (;;) {
+      last = await this.listFor(to);
+      const candidates = last.filter(
+        (m) => (!subject || subject.test(m.Subject)) && (!since || Date.parse(m.Created) >= since.getTime() - 1_000),
+      );
+      for (const candidate of candidates) {
+        const found = extractLinks(await this.get(candidate.ID)).find((l) => link.test(l));
+        if (found) return found;
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    const got = last.map((m) => `«${m.Subject}» (${m.Created})`).join(", ") || "ninguno";
+    throw new Error(
+      `No llegó ningún correo para ${to} con un enlace que cumpla ${String(link)} en ${timeoutMs / 1000} s. Recibidos: ${got}`,
+    );
   }
 
   /**
