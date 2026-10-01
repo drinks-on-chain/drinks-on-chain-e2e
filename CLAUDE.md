@@ -9,6 +9,14 @@ Pruebas entre aplicaciones de Drinks on Chain contra un entorno **compartido** (
 - **Nunca depender del orden**: cada archivo es independiente y cada recorrido de hito es un único `test` con `test.step` (los datos pasan de un paso a otro dentro de la prueba). Nada de estado compartido entre archivos ni de "la prueba anterior dejó…".
 - El buzón se consulta por destinatario exacto y, si puede haber correos previos, con `since`. Solo se borran los correos de la ejecución; vaciar el buzón entero (`pnpm mailbox purge --yes`) es una limpieza final explícita.
 
+## Ningún artefacto con datos de sesión
+
+- Contra el backend real **no se generan** trazas, vídeos, capturas, informe HTML ni el árbol de accesibilidad del "error context" (`PLAYWRIGHT_NO_COPY_PROMPT=1`): guardan cuerpos de peticiones (login, enrolamiento TOTP), cookies y valores tecleados. `playwright.config.ts` los tiene apagados.
+- Lo único que sale de una ejecución (consola de CI, que es pública, y artefacto `resumen-e2e-*`) es el resumen de `src/reporters/summary.ts`: prueba, paso y mensaje de error, pasados por `redact()` (`src/lib/redact.ts`, con pruebas unitarias), que quita `E2E_PASSWORD`, `E2E_TOTP_SECRET`, `Bearer …`, `doc_rt=…`, JWT, campos JSON de tokens y secretos, enlaces con `token=` o de invitación, secretos TOTP en base32 y códigos de recuperación. Si añades un tipo de secreto, añádelo al filtro y a su prueba.
+- Para depurar **en local**: `E2E_DEBUG_ARTIFACTS=1` activa trazas, capturas, vídeo e informe HTML. Prohibido en CI (la configuración falla) y esos archivos no se comparten ni se suben a ningún sitio.
+- Las contraseñas de las personas que crea la suite salen de `runPassword()` (`Pw-e2e-…`, que el filtro reconoce).
+- **Ninguna cuenta creada por una prueba queda activa**: cada recorrido que crea personas o usuarios internos tiene un `test.afterAll` (corre también si la prueba falla) que llama a `deactivateRunAccounts()` con la sesión ADMIN de demo: bloquea la cuenta completa de cada `+<runId>@` y anula sus invitaciones pendientes, y comprueba que no queda ninguna activa. Para una ejecución antigua: `pnpm cleanup <runId>`.
+
 ## Secretos
 
 - **Nunca imprimir secretos**: ni `E2E_PASSWORD`, ni `E2E_TOTP_SECRET`, ni llaves, ni tokens de acceso o invitación en logs, anotaciones, nombres de prueba o mensajes de error. `globalSetup` solo dice si están definidos.

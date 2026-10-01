@@ -14,6 +14,21 @@ const channel = CI ? undefined : (process.env.E2E_BROWSER_CHANNEL ?? "chrome");
 
 const enabled = APP_NAMES.filter(appEnabled);
 
+// Ningún artefacto con datos de sesión (CLAUDE.md). Contra el backend real, las trazas guardan
+// los cuerpos de las peticiones (login, enrolamiento TOTP), las capturas y los vídeos muestran
+// campos rellenos, el informe HTML lista los valores tecleados y el "error context" vuelca el
+// árbol de accesibilidad con los valores de los campos. Todo apagado; lo único que sale es el
+// resumen filtrado de src/reporters/summary.ts. Para depurar EN LOCAL: E2E_DEBUG_ARTIFACTS=1
+// (prohibido en CI: nada de eso se puede publicar).
+const DEBUG_ARTIFACTS = process.env.E2E_DEBUG_ARTIFACTS === "1";
+if (DEBUG_ARTIFACTS && CI)
+  throw new Error("E2E_DEBUG_ARTIFACTS no se permite en CI: los artefactos llevarían datos de sesión");
+// Sin el árbol de accesibilidad en error-context.md (Playwright 1.63 lo omite con esta variable;
+// se fija aquí, antes de lanzar los workers, que la heredan).
+if (!DEBUG_ARTIFACTS) process.env.PLAYWRIGHT_NO_COPY_PROMPT = "1";
+
+const SUMMARY: [string] = ["./src/reporters/summary.ts"];
+
 /** Apps que arranca Playwright: E2E_APPS (lista) o las activas sin URL propia. */
 function appsToServe(): AppName[] {
   if (process.env.E2E_START_APPS !== "1") return [];
@@ -45,13 +60,19 @@ export default defineConfig({
   forbidOnly: CI,
   timeout: 180_000,
   expect: { timeout: 15_000 },
-  reporter: CI ? [["github"], ["list"], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
+  // En CI solo el resumen filtrado (la consola de Actions es pública): ni `github` ni `list`, que
+  // imprimen los errores sin filtrar. El HTML solo en local y con E2E_DEBUG_ARTIFACTS=1.
+  reporter: CI
+    ? [SUMMARY]
+    : DEBUG_ARTIFACTS
+      ? [["list"], SUMMARY, ["html", { open: "never", noCopyPrompt: true }]]
+      : [["list"], SUMMARY],
   use: {
     locale: "es-BO",
     timezoneId: "America/La_Paz",
-    trace: CI ? "on" : "retain-on-failure",
-    screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    trace: DEBUG_ARTIFACTS ? "retain-on-failure" : "off",
+    screenshot: DEBUG_ARTIFACTS ? "only-on-failure" : "off",
+    video: DEBUG_ARTIFACTS ? "retain-on-failure" : "off",
     actionTimeout: 20_000,
     navigationTimeout: 30_000,
   },

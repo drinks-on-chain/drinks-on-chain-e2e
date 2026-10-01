@@ -2,10 +2,11 @@ import type { Page } from "@playwright/test";
 import { CAPTCHA_TEST_TOKEN, DEMO_PASSWORD, DEMO_TOTP_SECRET } from "../src/config";
 import { expect, needsDemoPassword, test } from "../src/fixtures/test";
 import { ORG, PLATFORM } from "../src/fixtures/users";
-import { missingRoutes, type LoginResult, type Membership, type Page as ListPage } from "../src/lib/api";
+import { ApiClient, missingRoutes, type LoginResult, type Membership, type Page as ListPage } from "../src/lib/api";
+import { deactivateRunAccounts } from "../src/lib/cleanup";
 import { MAILBOX_HELP, tokenFromLink } from "../src/lib/mailbox";
 import { fillLogin, settled, shellUser, trackErrors } from "../src/lib/page";
-import { runEmail, runName, runTaxId } from "../src/lib/run-id";
+import { runEmail, runName, runPassword, runTaxId } from "../src/lib/run-id";
 import { freshTotp } from "../src/lib/totp";
 
 // H1 · Alta de bodega (PLAN-MAESTRO, hito H1; contrato plan/contratos/o1-backoffice-y-bodegas.md):
@@ -19,9 +20,9 @@ import { freshTotp } from "../src/lib/totp";
 // Todo lo que crea lleva el prefijo de la ejecución (correos `<alias>+<runId>@example.test`,
 // nombres `… · <runId>`, NIT derivado); no toca a las personas ni a las bodegas de la semilla.
 //
-// test.fixme: requiere O1-BE-1 desplegado. Al empezar se consulta el OpenAPI del backend
-// (/docs-json) y, mientras falte alguna ruta de la Etapa 1, la prueba se marca fixme con la lista
-// de rutas que faltan en lugar de fallar.
+// Requiere O1-BE-1 desplegado: al empezar se consulta el OpenAPI del backend (/docs-json) y, si
+// falta alguna ruta de la Etapa 1 (p. ej. contra otro entorno), la prueba se marca fixme con la
+// lista de rutas que faltan en lugar de fallar.
 
 const H1_ROUTES = [
   "/v1/auth/mfa/verify",
@@ -45,7 +46,7 @@ const H1_ROUTES = [
 ] as const;
 
 /** Contraseña de las personas que crea la ejecución (≥ 10 caracteres, no común). */
-const NEW_PASSWORD = `Vendimia-${Date.now().toString(36)}-e2e`;
+const NEW_PASSWORD = runPassword();
 
 interface WinerySummary {
   id: string;
@@ -110,6 +111,25 @@ test.describe("H1 · de cero a bodega con equipo", () => {
       missing = await missingRoutes(H1_ROUTES);
     } catch (error) {
       openApiError = error instanceof Error ? error.message : String(error);
+    }
+  });
+
+  // Al terminar (también si la prueba falla): ninguna cuenta creada por la ejecución queda activa.
+  // Bloquea con la sesión ADMIN de demo la cuenta completa de cada persona `+<runId>@` y anula sus
+  // invitaciones pendientes.
+  test.afterAll(async ({ runId }) => {
+    if (openApiError !== null || missing.length > 0 || !DEMO_PASSWORD || !DEMO_TOTP_SECRET) return;
+    const admin = await ApiClient.create(`${runId} limpieza`);
+    try {
+      await admin.login(PLATFORM.admin.email, DEMO_PASSWORD, DEMO_TOTP_SECRET);
+      const result = await deactivateRunAccounts(admin, runId, `Fin del recorrido E2E ${runId}`);
+      console.log(
+        `Limpieza ${runId}: ${result.blocked.length} cuenta(s) bloqueadas, ${result.alreadyBlocked.length} ya bloqueadas, ${result.revokedInvitations.length} invitación(es) anuladas`,
+      );
+      expect(result.remaining, "cuentas de la ejecución que siguen activas").toEqual([]);
+    } finally {
+      await admin.logout();
+      await admin.dispose();
     }
   });
 
@@ -181,7 +201,7 @@ test.describe("H1 · de cero a bodega con equipo", () => {
     });
 
     await test.step("una bodega envía el formulario público y verifica su correo", async () => {
-      const visitor = await api.anonymous(`${runId} formulario`);
+      const visitor = await api.anonymous(`${runId} formulario`, "PUBLIC");
       const created = await visitor.raw<{ id: string; status: string }>("POST", "/v1/public/winery-applications", {
         body: {
           legalName: `${tradeName} S.R.L.`,
@@ -202,7 +222,15 @@ test.describe("H1 · de cero a bodega con equipo", () => {
       applicationId = created.data?.id ?? "";
       expect(applicationId).not.toBe("");
 
-      const link = await mailbox.waitForLink(owner.email, { link: /verificar/ });
+      // El backend responde 202 también cuando descarta la solicitud en silencio (campo trampa,
+      // NIT ya registrado, > 3 envíos por correo o > 10 por IP en una hora): entonces no hay correo.
+      const link = await mailbox
+        .waitForLink(owner.email, { link: /\/unirse\/verificar\?token=/, timeoutMs: 90_000 })
+        .catch((error: unknown) => {
+          throw new Error(
+            `${String(error)}. Si los logs del backend dicen «ignorada por el límite por correo o IP», esta IP ya envió 10 solicitudes en la última hora (p. ej. otras suites desde la misma máquina).`,
+          );
+        });
       const verified = await visitor.raw("POST", "/v1/public/winery-applications/verify", {
         body: { token: tokenFromLink(link) },
       });

@@ -9,3 +9,4 @@ node_modules/
 /.apps/
 *.tsbuildinfo
 .DS_Store
+/e2e-summary/

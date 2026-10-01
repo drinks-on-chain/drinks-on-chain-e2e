@@ -2,11 +2,11 @@
 
 Pruebas **entre aplicaciones** de Drinks on Chain: el recorrido de cada hito (H0–H6) del plan maestro contra el entorno de desarrollo, con las apps construidas **sin mocks** y los correos leídos en Mailpit. Diseño en `plan/04-calidad-y-verificacion.md` §5 del paraguas; avance en [`docs/ROADMAP.md`](docs/ROADMAP.md) y reglas en [`CLAUDE.md`](CLAUDE.md).
 
-| Recorrido                                                                                                                             | Archivo                           | Estado                                                               |
-| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
-| H0 · Integración: salud de API y worker, buzón, login con cookie, renovación, cambio de organización, parcelas, 422 por campo, cierre | `tests/h0-integracion.spec.ts`    | Ejecutable                                                           |
-| H1 · De cero a bodega con equipo (back office → solicitud → aprobación → ERP → equipo → bloqueo → alta directa → bitácoras)           | `tests/h1-alta-de-bodega.spec.ts` | `fixme` hasta que O1-BE-1 esté desplegado (lo detecta en el OpenAPI) |
-| H2–H6                                                                                                                                 | —                                 | Pendientes (una por hito)                                            |
+| Recorrido                                                                                                                             | Archivo                           | Estado                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------- |
+| H0 · Integración: salud de API y worker, buzón, login con cookie, renovación, cambio de organización, parcelas, 422 por campo, cierre | `tests/h0-integracion.spec.ts`    | Ejecutable                                                                          |
+| H1 · De cero a bodega con equipo (back office → solicitud → aprobación → ERP → equipo → bloqueo → alta directa → bitácoras)           | `tests/h1-alta-de-bodega.spec.ts` | Ejecutable (se marca `fixme` solo si el OpenAPI no declara las rutas de la Etapa 1) |
+| H2–H6                                                                                                                                 | —                                 | Pendientes (una por hito)                                                           |
 
 ## Cómo funciona
 
@@ -25,6 +25,12 @@ Pruebas **entre aplicaciones** de Drinks on Chain: el recorrido de cada hito (H0
 | `fixtures/users.ts` | Personas de demostración por rol (plataforma, bodega, dueño, consumidor y cajero de olas futuras)                                                                                                                          |
 | `fixtures/test.ts`  | `test` con `runId`, `mailbox`, `api`, `apps` y `openApp`                                                                                                                                                                   |
 
+## Ningún artefacto con datos de sesión
+
+Contra el backend real no se generan trazas, vídeos, capturas, informe HTML ni el "error context" de Playwright: guardarían el login, cookies, secretos TOTP y valores tecleados. Cada ejecución produce solo un **resumen de texto filtrado** (`e2e-summary/resumen.md` y `resumen.json`: prueba, paso y mensaje de error) pasado por `redact()`, que quita contraseñas, secretos TOTP, tokens, cookies y enlaces con token. Es lo único que se imprime en la consola de CI y lo único que sube el workflow. Para depurar en local, `E2E_DEBUG_ARTIFACTS=1` activa trazas, capturas, vídeo e informe HTML (prohibido en CI; no los compartas).
+
+Al terminar cada recorrido que crea cuentas, un `afterAll` (también si falla) **bloquea con la sesión ADMIN de demo todas las cuentas `+<runId>@`** y anula sus invitaciones pendientes; `pnpm cleanup <runId>` hace lo mismo para una ejecución anterior.
+
 ## Ejecutar en local
 
 Requisitos: Node 22 (`.nvmrc`), pnpm 10 (`corepack enable`), Chrome instalado (en local se usa el canal `chrome`; `E2E_BROWSER_CHANNEL` lo cambia) y acceso ssh al servidor (`drinksonchain-server`).
@@ -35,7 +41,7 @@ pnpm install
 # 1. Secretos en variables de tu proceso, sin imprimirlos
 export E2E_PASSWORD="$(ssh drinksonchain-server "sed -n 's/^SEED_DEMO_PASSWORD=//p' ~/doc-dev/.env")"
 export E2E_MAILPIT_SSH=drinksonchain-server        # buzón: ssh + curl en el servidor
-# export E2E_TOTP_SECRET=…                          # H1, cuando la semilla tenga TOTP
+export E2E_TOTP_SECRET="$(ssh drinksonchain-server "sed -n 's/^SEED_DEMO_TOTP_SECRET=//p' ~/doc-dev/.env")"
 
 # 2. Apps sin mocks (clon de la rama dev de la carpeta hermana; --source=github para GitHub)
 pnpm apps prepare erp                              # añade backoffice para H1
@@ -44,7 +50,7 @@ pnpm apps status
 # 3. Recorridos (Playwright arranca las apps construidas en 3102/3103)
 E2E_START_APPS=1 E2E_APPS=erp pnpm e2e:h0
 E2E_START_APPS=1 pnpm e2e                          # todos los proyectos activos
-pnpm report                                        # informe HTML
+cat e2e-summary/resumen.md                         # resumen filtrado
 ```
 
 - `sibling` (por defecto en local) clona la rama **local** de `../drinks-on-chain-<app>` (`E2E_REF_<APP>`, por defecto `dev`) sin tocar su copia de trabajo; `--source=github` clona el repo público. Para probar cambios sin commitear: `E2E_APP_DIR_ERP=../drinks-on-chain-erp` (construye esa carpeta tal cual y **sustituye su `.next`**).
@@ -59,7 +65,7 @@ pnpm report                                        # informe HTML
 - **Desde otro repo o la coordinación**: `repository_dispatch` con `event_type=e2e` y `client_payload` con los mismos campos.
 - **Diario** (solo H0, que no crea datos): se activa con la variable del repo `E2E_DAILY=1`.
 
-El workflow construye las apps desde GitHub, instala la llave de Mailpit (`DEV_MAILPIT_SSH_KEY`, comando forzado: solo `GET /api/v1/<ruta>` y `DELETE /api/v1/messages`) con `known_hosts`, exporta `E2E_PASSWORD` y `E2E_TOTP_SECRET`, y sube el informe HTML y las trazas como artefactos. `ci.yml` pasa `lint`, `typecheck`, las unitarias y `prettier` en cada push y PR.
+El workflow construye las apps desde GitHub, instala la llave de Mailpit (`DEV_MAILPIT_SSH_KEY`, comando forzado: solo `GET /api/v1/<ruta>` y `DELETE /api/v1/messages`) con `known_hosts`, exporta `E2E_PASSWORD` y `E2E_TOTP_SECRET`, y sube solo el resumen filtrado (`resumen-e2e-<runId>`): ni informe HTML ni trazas. `ci.yml` pasa `lint`, `typecheck`, las unitarias y `prettier` en cada push y PR.
 
 Secretos del repo: `DEV_SSH_HOST`, `DEV_SSH_USER`, `DEV_SSH_KNOWN_HOSTS`, `DEV_MAILPIT_SSH_KEY`, `E2E_PASSWORD`, `E2E_TOTP_SECRET` (este último lo crea la coordinación con la Ola 1).
 
@@ -77,6 +83,8 @@ Secretos del repo: `DEV_SSH_HOST`, `DEV_SSH_USER`, `DEV_SSH_KNOWN_HOSTS`, `DEV_M
 | `E2E_MAILPIT_SSH`, `E2E_MAILPIT_SSH_MODE`, `E2E_MAILPIT_SSH_KEY`        | Buzón por ssh: destino, `curl` (local) o `api` (llave de CI), llave                                              |
 | `E2E_MAILPIT_URL`                                                       | Buzón por HTTP (túnel)                                                                                           |
 | `E2E_KEEP_MAIL`                                                         | `1` = no borrar los correos de la ejecución al terminar                                                          |
+| `E2E_DEBUG_ARTIFACTS`                                                   | `1` = trazas, capturas, vídeo e informe HTML (solo local; prohibido en CI)                                       |
+| `E2E_SUMMARY_DIR`                                                       | Carpeta del resumen filtrado (por defecto `e2e-summary`)                                                         |
 | `E2E_RUN_ID`, `E2E_WORKERS`, `E2E_CAPTCHA_TOKEN`, `E2E_BROWSER_CHANNEL` | Prefijo fijo, workers, token de captcha de prueba, canal del navegador                                           |
 
 ## Buzón
