@@ -20,7 +20,8 @@ Pruebas entre aplicaciones de Drinks on Chain contra un entorno **compartido** (
 ## Limpieza de datos
 
 - **Ninguna bodega creada por una prueba queda en la lista pública** (`GET /v1/public/wineries`, que pintan los sitios públicos): el mismo `afterAll` llama a `retireRunWineries()`, que revoca con motivo cada bodega `… · <runId>` y comprueba la lista pública. Siempre por la API de plataforma; nunca borrando filas ni tocando una bodega sin el prefijo.
-- **Lotes** en una bodega de demostración: llevan el `runId` en el nombre y el `afterAll` descarta (`discardRunLots()`) los que no llegaron a cerrar su expediente. Un lote `CERTIFIED` es terminal para la API: se queda y se dice en el README.
+- **Nada en las bodegas de demostración**: un recorrido que necesita lotes crea su propia bodega (`runWineryName(runId)`, alta directa por la API de plataforma, equipo con correos `+<runId>@`) y los lotes dentro de ella; el `afterAll` la revoca. Un lote `CERTIFIED` es terminal para la API (no se descarta), así que nunca se crea en una bodega de la semilla.
+- Una bodega que llega a activarse consume un prefijo de lote único y definitivo derivado de las iniciales de su nombre: usa `runWineryName(runId)`, no un nombre fijo.
 - Un recorrido usa una botella distinta para cada comprobación que cambia su estado (p. ej. la anulación) y abre el visor después del cambio: el pasaporte público se cachea 60 s.
 - El pasaporte público frena la enumeración (más de 20 códigos inexistentes por IP en 10 minutos): un recorrido hace como mucho **una** consulta de un código inexistente y no prueba el 429.
 

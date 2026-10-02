@@ -1,43 +1,53 @@
 import type { Page } from "@playwright/test";
-import { DEMO_PASSWORD } from "../src/config";
+import { DEMO_PASSWORD, DEMO_TOTP_SECRET } from "../src/config";
 import { expect, needsDemoPassword, test } from "../src/fixtures/test";
-import { ORG, WINERY } from "../src/fixtures/users";
-import { ApiClient, missingRoutes, type Page as ListPage } from "../src/lib/api";
-import { discardRunLots } from "../src/lib/cleanup";
+import { PLATFORM } from "../src/fixtures/users";
+import { ApiClient, missingRoutes, type LoginResult, type Page as ListPage } from "../src/lib/api";
+import { deactivateRunAccounts, retireRunWineries } from "../src/lib/cleanup";
 import { daysAgo, plusDays } from "../src/lib/dates";
+import { MAILBOX_HELP, tokenFromLink } from "../src/lib/mailbox";
 import { bottleProofRoot, sha256Hex, type MerkleProof } from "../src/lib/merkle";
 import { trackErrors } from "../src/lib/page";
-import { runName } from "../src/lib/run-id";
+import { runEmail, runName, runPassword, runTaxId, runWineryName } from "../src/lib/run-id";
 
 // H2 · Pasaporte público (PLAN-MAESTRO, hito H2; contrato plan/contratos/o2-erp-confiable.md §12
 // y §18): el visor del Marketplace, construido sin mocks, pinta el pasaporte real de un lote y de
 // sus botellas.
 //
-//   por la API, con las personas de demostración de Destilería Cinti Viejo (enóloga, operario y
-//   agrónomo), un lote singani completo con fechas relativas a hoy y el reposo ya cumplido: lote →
-//   pesaje, análisis y dictamen → tanque, fermentación y destino singani → destilación cerrada →
-//   embotellado de 2.950 botellas → laboratorio conforme → cierre del expediente con huella
-//   → el visor abre `/b/{lotCode}` y `/b/{código de botella}` → se anula una botella por la API y
-//   el visor lo avisa → un código inexistente (una sola consulta) → "no encontrado".
+//   la plataforma da de alta por la API la bodega de la ejecución → su dueña acepta la invitación
+//   e invita a la enóloga, al agrónomo y al operario → parcela apta para singani → un lote singani
+//   completo con fechas relativas a hoy y el reposo ya cumplido (pesaje, análisis y dictamen →
+//   tanque, fermentación y destino singani → destilación cerrada → 2.950 botellas → laboratorio
+//   conforme → expediente cerrado con huella) → el HTML que sirve el Marketplace lleva el lote y
+//   es indexable (el de la botella, no) → el visor abre `/b/{lotCode}` y `/b/{código de botella}`
+//   y comprueba la botella contra el expediente → se anula una botella tras el cierre: conserva
+//   su prueba y el visor lo avisa → un código inexistente (una sola consulta) → "no encontrado".
 //
-// Todo lo que crea lleva el prefijo de la ejecución en el nombre del lote; de la semilla solo usa
-// una parcela apta y las personas, sin modificarlas. El recorrido completo del lote por la
-// interfaz del ERP, con las pruebas de elusión, es `h2-lote-singani.spec.ts` (parte 2).
+// Nada queda en las bodegas de demostración: la bodega, sus personas y el lote son de la
+// ejecución (`… · <runId>`, `+<runId>@`). Un lote con el expediente cerrado no se puede descartar,
+// así que la limpieza revoca la bodega entera y bloquea sus cuentas (afterAll). El pasaporte de
+// una bodega revocada sigue visible con su aviso (S-23): por eso el visor se comprueba antes.
 //
-// Requiere la Etapa 2 del backend (O2-BE-1): si el OpenAPI no declara sus rutas, se marca fixme.
+// El recorrido del lote por la interfaz del ERP, con las pruebas de elusión, es
+// `h2-lote-singani.spec.ts` (parte 2). Requiere la Etapa 2 del backend (O2-BE-1): si el OpenAPI
+// no declara sus rutas, se marca fixme.
 //
 // El freno de enumeración del pasaporte (más de 20 códigos inexistentes por IP en 10 minutos →
 // 429) no se prueba aquí ni debe dispararse: el recorrido hace una única consulta inexistente.
 
 const H2_ROUTES = [
+  "/v1/platform/wineries",
+  "/v1/organizations/current/invitations",
+  "/v1/invitations/{token}/accept",
+  "/v1/terroirs",
   "/v1/lots",
   "/v1/lots/{id}/bottling/preview",
   "/v1/lots/{id}/bottling",
   "/v1/lots/{id}/bottle-codes",
   "/v1/lots/{id}/lab-analyses",
+  "/v1/lots/{id}/dossier",
   "/v1/lots/{id}/dossier/preview",
   "/v1/lots/{id}/dossier/close",
-  "/v1/lots/{id}/discard",
   "/v1/bottle-codes/{code}/void",
   "/v1/harvest-batches/{id}/maturity-analyses",
   "/v1/harvest-batches/{id}/phyto-decisions",
@@ -54,18 +64,20 @@ const VARIETY = "Moscatel de Alejandría";
 const MIN_ALTITUDE = 1600;
 const REST_DAYS = 180;
 const BOTTLES = 2950;
+const REGION = "Valle de Cinti";
+const PARCEL = "Parcela Alta";
 const LAB_NAME = "Laboratorio E2E ISO 17025";
 /** Botella que se abre en el visor y botella que se anula (otra, para no leer nada cacheado). */
 const SERIAL = 1234;
 const VOIDED_SERIAL = 9;
 
+/** Contraseña de las personas que crea la ejecución (≥ 10 caracteres, no común). */
+const NEW_PASSWORD = runPassword();
+
 interface Terroir {
   id: string;
   parcelName: string;
-  altitudeMasl: number;
-  varietyName: string;
   isDoEligible: boolean;
-  isActive: boolean;
 }
 
 interface Lot {
@@ -140,19 +152,19 @@ async function proofOutcomes(page: Page): Promise<string[]> {
 /** Sección del pasaporte por su título (`<section aria-labelledby>`). */
 const section = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
 
-/** El visor pide el pasaporte desde el navegador: espera a que pinte el lote (su nombre en el h1). */
+/** Espera a que el visor pinte el pasaporte (el nombre del lote en el h1). */
 async function passportLoaded(page: Page, lotName: string) {
   await expect(page.getByRole("heading", { level: 1, name: lotName }), "pasaporte pintado").toBeVisible({
     timeout: 30_000,
   });
 }
 
+/** Valores de `<meta name="robots">` del HTML servido (sin ejecutar JavaScript). */
+const robotsOf = (html: string) => [...html.matchAll(/<meta name="robots" content="([^"]*)"/g)].map((m) => m[1] ?? "");
+
 test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
   let missing: string[] = [];
   let openApiError: string | null = null;
-  // Lo que deja el recorrido, para la limpieza.
-  let lotCreated = false;
-  let certified = false;
 
   test.beforeAll(async () => {
     try {
@@ -162,28 +174,31 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
     }
   });
 
-  // Al terminar (también si la prueba falla): un lote que no llegó a cerrar su expediente se
-  // descarta con motivo. El lote con el expediente cerrado es terminal para la API
-  // (`TRC_LOT_TERMINAL`): queda en la bodega de demostración con el prefijo de la ejecución en el
-  // nombre. El recorrido no crea bodegas ni cuentas.
+  // Al terminar (también si la prueba falla): la bodega de la ejecución queda revocada (fuera de
+  // la lista pública, con su lote dentro) y sus cuentas bloqueadas, con la sesión ADMIN de demo.
   test.afterAll(async ({ runId }) => {
-    if (!lotCreated || certified || !DEMO_PASSWORD) return;
-    const enologist = await ApiClient.create(`${runId} limpieza`);
+    if (openApiError !== null || missing.length > 0 || !DEMO_PASSWORD || !DEMO_TOTP_SECRET) return;
+    const admin = await ApiClient.create(`${runId} limpieza`);
     try {
-      await enologist.login(WINERY.cintiEnologist.email, DEMO_PASSWORD);
-      const result = await discardRunLots(enologist, runId, `Fin del recorrido E2E ${runId}`);
+      await admin.login(PLATFORM.admin.email, DEMO_PASSWORD, DEMO_TOTP_SECRET);
+      const reason = `Fin del recorrido E2E ${runId}`;
+      const accounts = await deactivateRunAccounts(admin, runId, reason);
+      const wineries = await retireRunWineries(admin, runId, reason);
       console.log(
-        `Limpieza ${runId}: ${result.discarded.length} lote(s) descartados, ${result.kept.length} conservados`,
+        `Limpieza ${runId}: ${accounts.blocked.length} cuenta(s) bloqueadas, ${wineries.revoked.length} bodega(s) revocadas`,
       );
+      expect(accounts.remaining, "cuentas de la ejecución que siguen activas").toEqual([]);
+      expect(wineries.stillPublic, "bodegas de la ejecución que siguen en la lista pública").toEqual([]);
     } finally {
-      await enologist.logout();
-      await enologist.dispose();
+      await admin.logout();
+      await admin.dispose();
     }
   });
 
-  test("lote singani por la API → pasaporte del lote y de la botella en el visor → código anulado → código inexistente", async ({
+  test("bodega de la ejecución → lote singani por la API → HTML servido → pasaporte del lote y de la botella en el visor → código anulado → código inexistente", async ({
     page,
     api,
+    mailbox,
     runId,
   }) => {
     test.fixme(openApiError !== null, `No se pudo leer el OpenAPI del backend: ${openApiError ?? ""}`);
@@ -192,8 +207,19 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       `requiere O2-BE-1 desplegado: el OpenAPI de desarrollo aún no declara ${missing.join(", ")}`,
     );
     needsDemoPassword();
-    test.setTimeout(10 * 60_000);
+    test.skip(!mailbox, MAILBOX_HELP);
+    test.skip(!DEMO_TOTP_SECRET, "Falta E2E_TOTP_SECRET (secreto TOTP del personal de plataforma de la semilla).");
+    if (!mailbox) return;
+    test.setTimeout(12 * 60_000);
 
+    // Bodega, personas y lote de la ejecución (los alias no chocan con los de H1).
+    const tradeName = runWineryName(runId);
+    const people = {
+      owner: { email: runEmail(runId, "pasaporte-duena"), name: `Dueña del pasaporte ${runId}` },
+      enologist: { email: runEmail(runId, "pasaporte-enologa"), name: `Enóloga del pasaporte ${runId}` },
+      agronomist: { email: runEmail(runId, "pasaporte-agronomo"), name: `Agrónomo del pasaporte ${runId}` },
+      operator: { email: runEmail(runId, "pasaporte-operario"), name: `Operario del pasaporte ${runId}` },
+    };
     const lotName = runName(runId, "Singani Gran Reserva 2026");
     const suffix = runId.split("-").at(-1) ?? runId;
     const year = Number(daysAgo(205).slice(0, 4));
@@ -210,13 +236,22 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
     /** Código de lote con forma válida que no existe (ninguna bodega tiene el prefijo ZZZ). */
     const missingCode = `ZZZ-${year}-SINGANI-999`;
 
-    // Una sesión por persona para todo el recorrido (cada inicio de sesión cuenta para el límite).
-    const enologist = await api.as(WINERY.cintiEnologist.email);
-    const operator = await api.as(WINERY.cintiOperator.email);
-    const agronomist = await api.as(WINERY.cintiAgronomist.email);
+    // Sesiones: un único inicio de sesión (administración, con su segundo factor); las personas
+    // de la bodega quedan con sesión al aceptar su invitación.
+    const owner = await api.anonymous(people.owner.email);
+    const enologist = await api.anonymous(people.enologist.email);
+    const agronomist = await api.anonymous(people.agronomist.email);
+    const operator = await api.anonymous(people.operator.email);
     const visitor = await api.anonymous(`${runId} visitante`);
 
-    let parcel: Terroir | undefined;
+    /** Acepta por la API la invitación que llegó al buzón; la persona queda con sesión en la bodega. */
+    const join = async (client: ApiClient, person: { email: string; name: string }): Promise<LoginResult> => {
+      const link = await mailbox.waitForLink(person.email, { link: /\/invitacion\// });
+      return client.acceptInvitation(tokenFromLink(link), person.name, NEW_PASSWORD);
+    };
+
+    let wineryId = "";
+    let parcelId = "";
     let lotId = "";
     let harvestId = "";
     let tankId = "";
@@ -228,13 +263,53 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
     let voided: BottleUnit | undefined;
     let passport: PublicLot | undefined;
 
-    await test.step("la enóloga crea el lote: instantánea con 1.600 m, Moscatel de Alejandría, 180 días y merma del 5 %", async () => {
-      // Parcela apta de la semilla (solo se lee): Moscatel de Alejandría a 1.600 m o más.
-      const terroirs = await enologist.get<ListPage<Terroir>>("/v1/terroirs", { limit: 100 });
-      parcel = terroirs.items.find(
-        (t) => t.isActive && t.isDoEligible && t.varietyName === VARIETY && t.altitudeMasl >= MIN_ALTITUDE,
-      );
-      expect(parcel, `parcela apta para singani en ${ORG.cinti}`).toBeTruthy();
+    await test.step("la plataforma da de alta la bodega de la ejecución y su dueña acepta la invitación", async () => {
+      const admin = await api.as(PLATFORM.admin.email, { totpSecret: DEMO_TOTP_SECRET });
+      const created = await admin.post<{ winery: { id: string; status: string } }>("/v1/platform/wineries", {
+        legalName: `${tradeName} S.R.L.`,
+        tradeName,
+        taxId: runTaxId(runId, "pasaporte"),
+        category: "DISTILLERY",
+        region: REGION,
+        contactEmail: people.owner.email,
+        ownerEmail: people.owner.email,
+        ownerFullName: people.owner.name,
+        reason: `Bodega del recorrido del pasaporte ${runId}`,
+      });
+      wineryId = created.winery.id;
+      expect(created.winery.status).toBe("INVITED");
+
+      const accepted = await join(owner, people.owner);
+      expect(accepted.activeOrganizationId).toBe(wineryId);
+      expect(accepted.memberships?.find((m) => m.organizationId === wineryId)?.role).toBe("OWNER");
+      test.info().annotations.push({ type: "bodega", description: `${tradeName} (se revoca al terminar)` });
+    });
+
+    await test.step("la dueña invita a la enóloga, al agrónomo y al operario, que aceptan desde el correo", async () => {
+      const team = [
+        [enologist, people.enologist, "ENOLOGIST"],
+        [agronomist, people.agronomist, "AGRONOMIST"],
+        [operator, people.operator, "OPERATOR"],
+      ] as const;
+      for (const [, person, role] of team) {
+        await owner.post("/v1/organizations/current/invitations", { email: person.email, role });
+      }
+      for (const [client, person, role] of team) {
+        const accepted = await join(client, person);
+        expect(accepted.memberships?.find((m) => m.organizationId === wineryId)?.role, person.email).toBe(role);
+      }
+    });
+
+    await test.step("parcela apta para singani y lote: instantánea con 1.600 m, Moscatel de Alejandría, 180 días y merma del 5 %", async () => {
+      const parcel = await owner.post<Terroir>("/v1/terroirs", {
+        parcelName: PARCEL,
+        surfaceHectares: 2.5,
+        altitudeMasl: 2350,
+        rawMaterialType: "Uva",
+        varietyName: VARIETY,
+      });
+      parcelId = parcel.id;
+      expect(parcel.isDoEligible, "aptitud D.O. calculada de la parcela").toBe(true);
 
       const lot = await enologist.post<Lot>("/v1/lots", {
         name: lotName,
@@ -246,7 +321,6 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         notes: `Lote de prueba del recorrido ${runId}`,
       });
       lotId = lot.id;
-      lotCreated = true;
       expect(lot).toMatchObject({
         stage: "ORIGIN",
         lotCode: null,
@@ -263,7 +337,7 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         "/v1/harvest-batches",
         {
           lotId,
-          terroirId: parcel?.id,
+          terroirId: parcelId,
           intakeDate: daysAgo(205),
           grossWeightKg: 18500,
           tareWeightKg: 100,
@@ -360,7 +434,7 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         bottling,
       );
       lotCode = bottled.lotCode;
-      expect(lotCode).toMatch(/^[A-Z0-9]+-\d{4}-SINGANI-\d{3,}$/);
+      expect(lotCode).toMatch(/^[A-Z]{3,5}-\d{4}-SINGANI-\d{3,}$/);
       expect(bottled.bottleCodes).toMatchObject({ total: BOTTLES, active: BOTTLES });
 
       const unit = async (serial: number) => {
@@ -378,8 +452,7 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
     });
 
     await test.step("laboratorio conforme (metanol en mg/100 mL a.a., cobre y grado) y cierre del expediente con huella", async () => {
-      // El informe va por su URL (alias de `laboratoryReportKey` hasta H2, contrato §8.1): así el
-      // recorrido no deja archivos en el almacenamiento de la bodega de demostración.
+      // El informe va por su URL (alias de `laboratoryReportKey` hasta H2, contrato §8.1).
       const lab = await enologist.post<{ conformityStatus: string }>(`/v1/lots/${lotId}/lab-analyses`, {
         certifiedLaboratoryName: LAB_NAME,
         accreditedLabCertificationCode: `LAB-E2E-${suffix}`,
@@ -406,11 +479,9 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       merkleRoot = closed.bottleCodes?.merkleRoot ?? "";
       expect(hash).toMatch(/^[0-9a-f]{64}$/);
       expect((await enologist.get<Lot>(`/v1/lots/${lotId}`)).stage).toBe("CERTIFIED");
-      certified = true;
-      test.info().annotations.push({
-        type: "lote",
-        description: `${lotCode} queda CERTIFIED en ${ORG.cinti} (un expediente cerrado no se puede descartar)`,
-      });
+      test
+        .info()
+        .annotations.push({ type: "lote", description: `${lotCode} · CERTIFIED en la bodega de la ejecución` });
     });
 
     await test.step("pasaporte público por la API: huella recalculable y prueba Merkle de la botella", async () => {
@@ -422,9 +493,9 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         productType: "SINGANI",
         vintage: year,
         stage: "CERTIFIED",
-        winery: { tradeName: ORG.cinti, active: true },
+        winery: { tradeName, region: REGION, active: true },
         denomination: { applies: true, status: "ELIGIBLE", legalException: false },
-        origin: { status: "RECORDED", terroirs: [{ parcelName: parcel?.parcelName, variety: VARIETY }] },
+        origin: { status: "RECORDED", terroirs: [{ parcelName: PARCEL, altitudeMasl: 2350, variety: VARIETY }] },
         harvest: { status: "RECORDED", phytosanitary: "APPROVED" },
         fermentation: { status: "RECORDED", readingsCount: 2 },
         aging: { status: "NOT_APPLICABLE" },
@@ -472,18 +543,41 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       ).toBe(merkleRoot);
     });
 
+    await test.step("HTML servido sin JavaScript: el lote va en el HTML y es indexable; la botella es noindex", async () => {
+      const lotPage = await page.request.get(`/b/${lotCode}`);
+      expect(lotPage.status()).toBe(200);
+      const lotHtml = await lotPage.text();
+      expect(lotHtml, "nombre del lote en el HTML servido").toContain(lotName);
+      expect(lotHtml, "bodega en el HTML servido").toContain(tradeName);
+      expect(lotHtml, "título con el lote y la bodega").toMatch(
+        new RegExp(`<title>${lotName} · ${tradeName}[^<]*</title>`),
+      );
+      expect(robotsOf(lotHtml), "robots de la página del lote").toEqual(["index, follow"]);
+      expect(lotHtml).toContain(`<link rel="canonical" href="/b/${lotCode}"`);
+
+      const bottlePage = await page.request.get(`/b/${bottle?.code ?? ""}`);
+      expect(bottlePage.status()).toBe(200);
+      const robots = robotsOf(await bottlePage.text());
+      expect(robots.length, "la página de la botella declara robots").toBeGreaterThan(0);
+      expect(
+        robots.every((value) => value.includes("noindex")),
+        `robots de la página de la botella: ${robots.join(" | ")}`,
+      ).toBe(true);
+    });
+
     // El visor: una sola página para todo el recorrido. Lo único que se espera en rojo es el 404
-    // del código inexistente.
-    const errors = trackErrors(page, [new RegExp(`^404 /api/v1/public/passports/${missingCode}$`)]);
+    // del documento del código inexistente.
+    const errors = trackErrors(page, [new RegExp(`^404 /b/${missingCode}$`)]);
 
     await test.step("el visor abre /b/{lotCode}: nombre, bodega, D.O., elaboración, registro, laboratorio y expediente cerrado", async () => {
       await page.goto(`/b/${lotCode}`);
       await passportLoaded(page, lotName);
       await expect(page.getByText(`Singani · Añada ${year}`)).toBeVisible();
-      await expect(page.getByRole("link", { name: `Ver la página de ${ORG.cinti}` })).toHaveText(ORG.cinti);
-      await expect(page.getByText(passport?.winery.region ?? "", { exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: `Ver la página de ${tradeName}` })).toHaveText(tradeName);
+      await expect(page.getByText(REGION, { exact: true })).toBeVisible();
       await expect(page.getByText("Esta etiqueta identifica el lote")).toBeVisible();
       await expect(page.getByRole("main").getByText(lotCode, { exact: true })).toBeVisible();
+      await expect(page.getByText("Esta bodega no está activa en la red")).toHaveCount(0);
 
       // Expediente cerrado, con su huella abreviada (la completa, en el título).
       const dossier = section(page, "Expediente del lote");
@@ -494,7 +588,7 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
 
       // Origen y Denominación de Origen, con las reglas de la instantánea.
       const origin = section(page, "Origen");
-      await expect(origin.getByText(parcel?.parcelName ?? "", { exact: true })).toBeVisible();
+      await expect(origin.getByText(PARCEL, { exact: true })).toBeVisible();
       await expect(origin.getByText("Apta", { exact: true })).toBeVisible();
       await expect(origin.getByText("Cumple la Denominación de Origen", { exact: true })).toBeVisible();
       await expect(origin).toContainText(`parcelas a 1.600 m s. n. m. o más, y uva de ${VARIETY}`);
@@ -533,7 +627,7 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       await expect(section(page, "Reglas con las que se hizo el lote")).toContainText("Fijadas el");
     });
 
-    await test.step("el visor abre /b/{código de botella}: botella n.º 1.234 de 2.950 y comprobación de pertenencia", async () => {
+    await test.step("el visor abre /b/{código de botella}: botella n.º 1.234 de 2.950, y el código pertenece al expediente cerrado", async () => {
       await page.goto(`/b/${bottle?.code ?? ""}`);
       await passportLoaded(page, lotName);
       await expect(page.getByText("Botella n.º 1.234 de 2.950", { exact: true })).toBeVisible();
@@ -547,11 +641,9 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       await expect(page.getByText("Este código fue anulado por la bodega")).toHaveCount(0);
 
       // El navegador descarga el expediente canónico (`dossier.canonicalUrl`), recalcula su huella
-      // y la raíz Merkle desde la botella. Comprobación blanda: si el visor no lo consigue contra
-      // el backend real, el error dice qué resultado pintó, y el recorrido sigue (anulación y
-      // código inexistente) y termina en rojo.
+      // y comprueba la prueba Merkle de la botella contra la raíz del expediente. Si no sale
+      // "verificado", el error dice qué resultado pintó el visor.
       await expect
-        .configure({ soft: true })
         .poll(() => proofOutcomes(page), {
           message:
             "resultado de la comprobación de la botella contra el expediente cerrado en el visor (huella del expediente canónico + raíz Merkle desde la botella)",
@@ -560,11 +652,23 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         .toEqual(["verified"]);
     });
 
-    await test.step("la enóloga anula una botella por la API y el visor lo avisa", async () => {
+    await test.step("una botella anulada tras el cierre conserva su prueba (S-14) y el visor avisa de la anulación", async () => {
       const result = await enologist.post<BottleUnit>(`/v1/bottle-codes/${voided?.code ?? ""}/void`, {
         reason: `Botella rota tras el cierre · ${runId}`,
       });
       expect(result).toMatchObject({ status: "VOIDED", serial: VOIDED_SERIAL });
+
+      // Formó parte del expediente: sigue probándolo, y ni la raíz ni la huella cambian.
+      const after = await visitor.get<PublicBottle>(`/v1/public/passports/${voided?.code ?? ""}`);
+      expect(after.bottle).toMatchObject({ serial: VOIDED_SERIAL, lotTotal: BOTTLES, status: "VOIDED" });
+      const proof = after.bottle.merkleProof;
+      expect(proof, "prueba Merkle de la botella anulada tras el cierre").not.toBeNull();
+      expect(proof ? bottleProofRoot(VOIDED_SERIAL, after.bottle.code, proof) : null).toBe(merkleRoot);
+      expect(await enologist.get<Dossier>(`/v1/lots/${lotId}/dossier`)).toMatchObject({
+        status: "CLOSED",
+        hash,
+        bottleCodes: { count: BOTTLES, merkleRoot },
+      });
 
       await page.goto(`/b/${voided?.code ?? ""}`);
       await passportLoaded(page, lotName);
@@ -572,22 +676,24 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       await expect(page.getByText("Si la etiqueta de tu botella lo muestra, avisa a la bodega.")).toBeVisible();
       await expect(page.getByText(`Botella n.º ${VOIDED_SERIAL} de 2.950`, { exact: true })).toBeVisible();
       await expect(page.getByRole("main").getByText(voided?.codeFormatted ?? "", { exact: true })).toBeVisible();
-      // Un código anulado no presume de pertenecer al expediente.
+      // Un código anulado no se presenta como perteneciente al expediente.
       await expect(page.getByText(PROOF_OUTCOMES.verified)).toHaveCount(0);
     });
 
-    await test.step("un código inexistente (una sola consulta) → no encontrado", async () => {
-      let lookups = 0;
-      page.on("response", (r) => {
-        if (new URL(r.url()).pathname === `/api/v1/public/passports/${missingCode}`) lookups += 1;
+    await test.step("un código de lote inexistente (una sola consulta, la del servidor) → 404 y no encontrado", async () => {
+      let browserLookups = 0;
+      page.on("request", (r) => {
+        if (new URL(r.url()).pathname.startsWith("/api/v1/public/")) browserLookups += 1;
       });
-      await page.goto(`/b/${missingCode}`);
+      const response = await page.goto(`/b/${missingCode}`);
+      expect(response?.status(), "estado del documento").toBe(404);
       await expect(page.getByRole("heading", { level: 1, name: missingCode })).toBeVisible();
       await expect(page.getByText("No encontramos este código", { exact: true })).toBeVisible();
       await expect(page.getByText(/Ese lote no figura en el registro/)).toBeVisible();
-      expect(lookups, "consultas del código inexistente").toBe(1);
+      // El servidor ya consultó el código: el navegador no lo repite.
+      expect(browserLookups, "consultas del navegador al pasaporte público").toBe(0);
     });
 
-    expect.soft(errors, "respuestas o errores inesperados en el visor").toEqual([]);
+    expect(errors, "respuestas o errores inesperados en el visor").toEqual([]);
   });
 });
