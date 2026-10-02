@@ -425,6 +425,10 @@ test.describe("H2 · del lote a la botella por el ERP, con el pasaporte en el Ma
 
     await test.step("ERP · tanque de 12.100 L, lectura y fermentación completada con destino singani", async () => {
       await openHarvest(enologist, harvestCode);
+      // El dictamen lo acaba de registrar otra persona en otro navegador: la enóloga recarga la
+      // ficha del pesaje (la suya, de antes del dictamen, sigue en la memoria de la app).
+      await enologist.reload();
+      await expect(enologist.getByText("Lote aprobado").first()).toBeVisible({ timeout: 30_000 });
       await enologist.getByRole("link", { name: "Llenar tanque" }).first().click();
       await expect(enologist.getByRole("checkbox", { name: harvestCode })).toBeChecked({ timeout: 20_000 });
       await enologist.getByLabel("Capacidad").fill("15000");
