@@ -6,7 +6,7 @@ import { ApiClient, missingRoutes, type LoginResult, type Membership, type Page 
 import { deactivateRunAccounts, retireRunWineries } from "../src/lib/cleanup";
 import { MAILBOX_HELP, tokenFromLink } from "../src/lib/mailbox";
 import { fillLogin, settled, shellUser, trackErrors } from "../src/lib/page";
-import { runEmail, runName, runPassword, runTaxId } from "../src/lib/run-id";
+import { runEmail, runName, runPassword, runTaxId, runWineryName } from "../src/lib/run-id";
 import { freshTotp } from "../src/lib/totp";
 
 // H1 · Alta de bodega (PLAN-MAESTRO, hito H1; contrato plan/contratos/o1-backoffice-y-bodegas.md):
@@ -161,7 +161,10 @@ test.describe("H1 · de cero a bodega con equipo", () => {
     const enologist = { email: runEmail(runId, "enologa"), name: `Enóloga ${runId}` };
     const operator = { email: runEmail(runId, "operario"), name: `Operario ${runId}` };
     const direct = { email: runEmail(runId, "dueno-directo"), name: `Dueño directo ${runId}` };
-    const tradeName = runName(runId, "Bodega Norte");
+    // La bodega de la solicitud llega a activarse y consume un prefijo de lote único y definitivo:
+    // su nombre cambia de iniciales con la ejecución. La del alta directa no se activa (nadie
+    // acepta su invitación), así que no gasta prefijo y conserva un nombre fijo.
+    const tradeName = runWineryName(runId, "Bodega", 1);
     const directTradeName = runName(runId, "Bodega Sur");
     const blockReason = `Bloqueo de prueba ${runId}`;
 

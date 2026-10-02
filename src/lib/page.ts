@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { paceLogin } from "./login-pace";
 
 // Utilidades de página comunes a las apps (todas nacen de la misma plantilla: shell, menú de
 // usuario, login y sesión por cookie).
@@ -32,6 +33,7 @@ export const shellUser = (page: Page) => page.getByRole("button", { name: /Menú
 
 /** Rellena el login de la app (ERP o Backoffice) y pulsa "Entrar". */
 export async function fillLogin(page: Page, email: string, password: string) {
+  await paceLogin();
   await page.goto("/login");
   await page.getByLabel("Correo electrónico").fill(email);
   await page.getByLabel("Contraseña").fill(password);

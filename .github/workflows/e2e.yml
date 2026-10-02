@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       specs:
-        description: "Recorridos (filtro de Playwright: h0-, h1-, h2-pasaporte, 'h0- h1-'; vacío = todos)"
+        description: "Recorridos (filtro de Playwright: h0-, h1-, h2-, h2-pasaporte, h2-recorrido, 'h0- h1-'; vacío = todos)"
         required: false
         default: "h0-"
       erp_ref:
@@ -94,7 +94,8 @@ jobs:
         run: |
           echo "E2E_RUN_ID=e2e-$(date -u +%Y%m%dt%H%M)-${GITHUB_RUN_ID: -6}" >> "$GITHUB_ENV"
           # Apps de cada recorrido: H0, el ERP; H1, ERP y Backoffice; el pasaporte de H2, el
-          # Marketplace. Sin filtro o con un filtro que no se conoce, todas.
+          # Marketplace; el recorrido de H2, ERP y Marketplace. Sin filtro o con un filtro que no
+          # se conoce (p. ej. `h2-`), todas.
           apps=""
           add() { case ",$apps," in *",$1,"*) ;; *) apps="${apps:+$apps,}$1" ;; esac; }
           for spec in ${SPECS:-todos}; do
@@ -102,6 +103,7 @@ jobs:
               h0-*) add erp ;;
               h1-*) add erp; add backoffice ;;
               h2-pasaporte*) add marketplace ;;
+              h2-recorrido*) add erp; add marketplace ;;
               *) add erp; add backoffice; add marketplace ;;
             esac
           done

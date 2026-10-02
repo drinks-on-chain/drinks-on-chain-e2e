@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { base32Decode, freshTotp, hotp, totp, totpRemainingMs } from "./totp";
+import { base32Decode, freshTotp, hotp, readSharedStep, sharedTotpFile, totp, totpRemainingMs } from "./totp";
 
 // Vectores de RFC 4226 (apéndice D) y RFC 6238 (apéndice B, SHA-1) con el secreto ASCII
 // "12345678901234567890", cuyo base32 es GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ.
@@ -45,6 +48,36 @@ describe("freshTotp", () => {
       expect(await second).not.toBe(first);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("no repite el código del secreto de demostración que otro proceso de la ejecución ya usó en este paso", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "e2e-totp-"));
+    const file = join(dir, "paso.json");
+    const saved = { secret: process.env.E2E_TOTP_SECRET, file: process.env.E2E_TOTP_STATE_FILE };
+    const DEMO = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+    process.env.E2E_TOTP_SECRET = DEMO;
+    process.env.E2E_TOTP_STATE_FILE = file;
+    vi.useFakeTimers({ now: 600_000 });
+    try {
+      expect(sharedTotpFile()).toBe(file);
+      expect(readSharedStep(file)).toBe(-1);
+      // Otro proceso entregó el código del paso actual (600 s / 30 s = paso 20).
+      writeFileSync(file, JSON.stringify({ step: 20 }));
+      const pending = freshTotp(DEMO);
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(await pending).toBe(totp(DEMO, 630_200));
+      expect(readSharedStep(file)).toBe(21);
+      // Un secreto que no es el de demostración (el de una persona de la ejecución) no usa el archivo.
+      expect(await freshTotp(SECRET_B32)).toBe(totp(SECRET_B32, 630_200));
+      expect(readSharedStep(file)).toBe(21);
+    } finally {
+      vi.useRealTimers();
+      if (saved.secret === undefined) delete process.env.E2E_TOTP_SECRET;
+      else process.env.E2E_TOTP_SECRET = saved.secret;
+      if (saved.file === undefined) delete process.env.E2E_TOTP_STATE_FILE;
+      else process.env.E2E_TOTP_STATE_FILE = saved.file;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

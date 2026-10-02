@@ -1,5 +1,6 @@
 import { request, type APIRequestContext, type APIResponse } from "@playwright/test";
 import { API_ORIGIN } from "../config";
+import { paceLogin } from "./login-pace";
 import { freshTotp } from "./totp";
 
 // Cliente directo contra el backend para preparar datos y comprobar estados sin pasar por una
@@ -202,6 +203,7 @@ export class ApiClient {
    * secreto nuevo en `enrolledSecret`.
    */
   async login(email: string, password: string, totpSecret?: string): Promise<LoginResult> {
+    await paceLogin();
     const first = await this.call<LoginResult>("POST", "/v1/auth/login", { body: { email, password } });
     if (!first.mfa?.required) return this.adopt(first);
     const { mfaToken, enrolled } = first.mfa;

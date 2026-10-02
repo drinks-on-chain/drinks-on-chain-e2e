@@ -2,13 +2,14 @@ import type { Page } from "@playwright/test";
 import { DEMO_PASSWORD, DEMO_TOTP_SECRET } from "../src/config";
 import { expect, needsDemoPassword, test } from "../src/fixtures/test";
 import { PLATFORM } from "../src/fixtures/users";
-import { ApiClient, missingRoutes, type LoginResult, type Page as ListPage } from "../src/lib/api";
+import { ApiClient, missingRoutes, type Page as ListPage } from "../src/lib/api";
 import { deactivateRunAccounts, retireRunWineries } from "../src/lib/cleanup";
 import { daysAgo, plusDays } from "../src/lib/dates";
-import { MAILBOX_HELP, tokenFromLink } from "../src/lib/mailbox";
+import { MAILBOX_HELP } from "../src/lib/mailbox";
 import { bottleProofRoot, sha256Hex, type MerkleProof } from "../src/lib/merkle";
 import { trackErrors } from "../src/lib/page";
-import { runEmail, runName, runPassword, runTaxId, runWineryName } from "../src/lib/run-id";
+import { runEmail, runName, runPassword, runWineryName } from "../src/lib/run-id";
+import { createParcel, createRunWinery, inviteTeam, SINGANI_VARIETY } from "../src/lib/run-winery";
 
 // H2 · Pasaporte público (PLAN-MAESTRO, hito H2; contrato plan/contratos/o2-erp-confiable.md §12
 // y §18): el visor del Marketplace, construido sin mocks, pinta el pasaporte real de un lote y de
@@ -60,7 +61,7 @@ const H2_ROUTES = [
 ] as const;
 
 // Caso del contrato §18.
-const VARIETY = "Moscatel de Alejandría";
+const VARIETY = SINGANI_VARIETY;
 const MIN_ALTITUDE = 1600;
 const REST_DAYS = 180;
 const BOTTLES = 2950;
@@ -73,12 +74,6 @@ const VOIDED_SERIAL = 9;
 
 /** Contraseña de las personas que crea la ejecución (≥ 10 caracteres, no común). */
 const NEW_PASSWORD = runPassword();
-
-interface Terroir {
-  id: string;
-  parcelName: string;
-  isDoEligible: boolean;
-}
 
 interface Lot {
   id: string;
@@ -244,13 +239,6 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
     const operator = await api.anonymous(people.operator.email);
     const visitor = await api.anonymous(`${runId} visitante`);
 
-    /** Acepta por la API la invitación que llegó al buzón; la persona queda con sesión en la bodega. */
-    const join = async (client: ApiClient, person: { email: string; name: string }): Promise<LoginResult> => {
-      const link = await mailbox.waitForLink(person.email, { link: /\/invitacion\// });
-      return client.acceptInvitation(tokenFromLink(link), person.name, NEW_PASSWORD);
-    };
-
-    let wineryId = "";
     let parcelId = "";
     let lotId = "";
     let harvestId = "";
@@ -265,49 +253,33 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
 
     await test.step("la plataforma da de alta la bodega de la ejecución y su dueña acepta la invitación", async () => {
       const admin = await api.as(PLATFORM.admin.email, { totpSecret: DEMO_TOTP_SECRET });
-      const created = await admin.post<{ winery: { id: string; status: string } }>("/v1/platform/wineries", {
-        legalName: `${tradeName} S.R.L.`,
+      await createRunWinery(admin, mailbox, {
+        runId,
         tradeName,
-        taxId: runTaxId(runId, "pasaporte"),
-        category: "DISTILLERY",
+        taxSalt: "pasaporte",
         region: REGION,
-        contactEmail: people.owner.email,
-        ownerEmail: people.owner.email,
-        ownerFullName: people.owner.name,
-        reason: `Bodega del recorrido del pasaporte ${runId}`,
+        owner: people.owner,
+        ownerClient: owner,
+        password: NEW_PASSWORD,
       });
-      wineryId = created.winery.id;
-      expect(created.winery.status).toBe("INVITED");
-
-      const accepted = await join(owner, people.owner);
-      expect(accepted.activeOrganizationId).toBe(wineryId);
-      expect(accepted.memberships?.find((m) => m.organizationId === wineryId)?.role).toBe("OWNER");
       test.info().annotations.push({ type: "bodega", description: `${tradeName} (se revoca al terminar)` });
     });
 
     await test.step("la dueña invita a la enóloga, al agrónomo y al operario, que aceptan desde el correo", async () => {
-      const team = [
-        [enologist, people.enologist, "ENOLOGIST"],
-        [agronomist, people.agronomist, "AGRONOMIST"],
-        [operator, people.operator, "OPERATOR"],
-      ] as const;
-      for (const [, person, role] of team) {
-        await owner.post("/v1/organizations/current/invitations", { email: person.email, role });
-      }
-      for (const [client, person, role] of team) {
-        const accepted = await join(client, person);
-        expect(accepted.memberships?.find((m) => m.organizationId === wineryId)?.role, person.email).toBe(role);
-      }
+      await inviteTeam(
+        owner,
+        mailbox,
+        [
+          [enologist, people.enologist, "ENOLOGIST"],
+          [agronomist, people.agronomist, "AGRONOMIST"],
+          [operator, people.operator, "OPERATOR"],
+        ],
+        NEW_PASSWORD,
+      );
     });
 
     await test.step("parcela apta para singani y lote: instantánea con 1.600 m, Moscatel de Alejandría, 180 días y merma del 5 %", async () => {
-      const parcel = await owner.post<Terroir>("/v1/terroirs", {
-        parcelName: PARCEL,
-        surfaceHectares: 2.5,
-        altitudeMasl: 2350,
-        rawMaterialType: "Uva",
-        varietyName: VARIETY,
-      });
+      const parcel = await createParcel(owner, { parcelName: PARCEL, altitudeMasl: 2350 });
       parcelId = parcel.id;
       expect(parcel.isDoEligible, "aptitud D.O. calculada de la parcela").toBe(true);
 

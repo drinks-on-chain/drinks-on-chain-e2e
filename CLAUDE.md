@@ -33,7 +33,10 @@ Pruebas entre aplicaciones de Drinks on Chain contra un entorno **compartido** (
 
 ## Pruebas
 
-- Recorridos contra el backend real y con límites por IP (login 10/min): en serie, sin reintentos y con el mínimo de inicios de sesión (reutiliza una sesión de `api.as` dentro del recorrido).
+- Recorridos contra el backend real y con límites por IP (login 10/min): en serie, sin reintentos y con el mínimo de inicios de sesión (reutiliza una sesión de `api.as` dentro del recorrido; las personas que crea la ejecución quedan con sesión de API al aceptar su invitación). `fillLogin` y `ApiClient.login` pasan por `paceLogin()`.
+- Un código TOTP es de un solo uso: siempre `freshTotp()`, que no repite el del secreto de demostración ni entre los workers de una ejecución.
+- Varias personas a la vez: un navegador por persona (`openApp`). Lo que una registra no aparece en la pantalla ya abierta de otra hasta que recarga (las apps guardan 30 s lo que leyeron): recarga la página, como haría la persona.
+- Bodega propia y datos de apoyo por la API con `src/lib/run-winery.ts`; por la interfaz solo lo que el recorrido quiere comprobar.
 - Selectores accesibles (`getByRole`, `getByLabel`, textos en español de las apps); sin `waitForTimeout` salvo para el paso del TOTP (`freshTotp`).
 - `trackErrors(page, esperados)` en cada página y `expect(errors).toEqual([])` al final: los 4xx provocados se declaran como esperados.
 - Un recorrido que depende de rutas aún no desplegadas se marca `test.fixme` **detectándolo** con `missingRoutes()` (OpenAPI de `/docs-json`), con el mensaje "requiere <tarea> desplegado".

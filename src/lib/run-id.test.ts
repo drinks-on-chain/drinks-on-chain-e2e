@@ -47,5 +47,10 @@ describe("run-id", () => {
         .join("");
     expect(initials(runWineryName("e2e-20261002t1506-567801"))).toBe("IAB");
     expect(initials(runWineryName("e2e-20261002t1506-567802"))).toBe("IAC");
+    // Otra bodega de la misma ejecución: iniciales y nombre distintos.
+    expect(runWineryName("e2e-20261002t1506-567801", "Bodega", 1)).toBe(
+      "Bodega Jara Brisa Cumbre · e2e-20261002t1506-567801",
+    );
+    expect(initials(runWineryName("e2e-20261002t1506-567801", "Destilería", 3))).toBe("LDE");
   });
 });
