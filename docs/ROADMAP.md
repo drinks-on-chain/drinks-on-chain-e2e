@@ -9,11 +9,19 @@ Un recorrido por hito del plan maestro (`PLAN-MAESTRO.md` §3, `plan/04` §5), c
 - [x] Utilidades: `mailbox` (Mailpit por ssh o HTTP), `totp`, `api` (`X-Client-App: API`), `run-id`, personas de demostración por rol · 27-09-2026
 - [x] CI: `ci.yml` (lint, tsc, unitarias, formato) y `e2e.yml` (manual, `repository_dispatch`, diario opcional; informe y trazas como artefactos) · 27-09-2026
 
+## Ola 2 (O2-E2E-1, parte 1)
+
+- [x] Limpieza: las bodegas de cada ejecución se revocan al terminar y salen de la lista pública (`retireRunWineries`); `pnpm cleanup <runId>…` y la entrada `cleanup` del workflow para ejecuciones anteriores; lotes sin certificar descartados (`discardRunLots`) · 02-10-2026 · ec258a9 · CI E2E 37023200224 (cuatro ejecuciones residuales limpiadas)
+- [x] Proyecto `marketplace` (puerto 3104, sin mocks) y `marketplace_ref` en el workflow · 02-10-2026 · 6a9550f
+- [ ] H0 contra el backend de la Ola 2: el panel del ERP (`14879e5`) no carga con los datos de Altos de Calamuchita ("Recibimos datos inesperados del servidor"); pendiente del ERP o de los mocks · CI E2E 37024567801
+
 ## Hitos
 
 - [x] **H0** · Integración: salud de API y worker, buzón con la llave restringida, login con cookie `doc_rt`, renovación tras recargar, cambio de organización (bodega `SUSPENDED`), parcelas, 422 por campo, cierre de sesión (`tests/h0-integracion.spec.ts`) · 27-09-2026 · 96e1514 · CI E2E 36345510562 (4/4)
 - [x] **H1** · De cero a bodega con equipo: administración → operaciones (TOTP) → solicitud pública verificada → aprobación → dueño en el ERP → enóloga → soporte bloquea a un operario (401) → alta directa → bitácoras (`tests/h1-alta-de-bodega.spec.ts`) · 27-09-2026 · 7d12a82 · CI E2E 36358048452 (backend `eace713`)
-- [ ] **H2** · Lote "Singani Gran Reserva 2026" de la parcela a los códigos de botella en el ERP; elusiones de candados, D.O., dictamen y número de botellas → 422 explicado en la UI; visor del Marketplace con el pasaporte real (`h2-lote-singani.spec.ts`)
+- [ ] **H2** · Lote "Singani Gran Reserva 2026" de la parcela a los códigos de botella en el ERP; elusiones de candados, D.O., dictamen y número de botellas → 422 explicado en la UI; visor del Marketplace con el pasaporte real
+  - [ ] Pasaporte en el visor (`tests/h2-pasaporte.spec.ts`, O2-E2E-1 parte 1): lote completo por la API → `/b/{lote}` y `/b/{botella}` → código anulado → código inexistente · escrito el 02-10-2026 · CI E2E 37024567801: pasa todo salvo la comprobación de pertenencia de la botella en el visor (nodos Merkle: bytes en el backend, texto hexadecimal en los mocks 0.5.0-rc.1 que usa el Marketplace)
+  - [ ] Lote por la interfaz del ERP con las pruebas de elusión (`h2-lote-singani.spec.ts`, O2-E2E-1 parte 2)
 - [ ] **H3** · Tokenización en testnet: autorización de 100 botellas, aprobación, 100 NFT en el contrato, hash anclado al certificar y verificado en el visor, conciliación sin diferencias (`h3-tokenizacion.spec.ts`)
 - [ ] **H4** · Compra: registro del consumidor, dos botellas en preventa, "pago recibido", NFT a su nombre, línea de tiempo al registrar una etapa, reseña (`h4-compra.spec.ts`)
 - [ ] **H5** · Canje: ciclo 1–12 entre las cuatro apps y los sitios públicos, entrega asistida, pase caducado regenerado (`h5-canje.spec.ts`)
