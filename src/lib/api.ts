@@ -166,6 +166,31 @@ export class ApiClient {
   }
 
   /**
+   * Sube un archivo a la organización activa (`POST /v1/uploads`, multipart) y devuelve su
+   * `key`, que es lo que guardan los registros (p. ej. `laboratoryReportKey`). El backend reconoce
+   * el tipo por el contenido: un PDF debe empezar por `%PDF-`.
+   */
+  async upload(file: { name: string; mimeType: string; buffer: Buffer }, folder: string): Promise<string> {
+    const runId = process.env.E2E_RUN_ID ?? "e2e";
+    const headers: Record<string, string> = {
+      "X-Correlation-ID": `${runId}-${String(++correlation).padStart(4, "0")}`,
+    };
+    if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
+    const response = await this.context.fetch("/v1/uploads", {
+      method: "POST",
+      headers,
+      params: { folder },
+      multipart: { file },
+      failOnStatusCode: false,
+    });
+    const envelope = (await response.json().catch(() => undefined)) as Envelope<{ key: string }> | undefined;
+    if (!response.ok() || !envelope?.data?.key) {
+      throw new ApiError("POST", "/v1/uploads", response.status(), envelope?.error);
+    }
+    return envelope.data.key;
+  }
+
+  /**
    * `GET` que devuelve el cuerpo tal cual, sin interpretar el envoltorio (p. ej. los bytes
    * canónicos del expediente, que hay que recibir intactos para recalcular su huella).
    */

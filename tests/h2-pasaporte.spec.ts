@@ -41,6 +41,7 @@ const H2_ROUTES = [
   "/v1/organizations/current/invitations",
   "/v1/invitations/{token}/accept",
   "/v1/terroirs",
+  "/v1/uploads",
   "/v1/lots",
   "/v1/lots/{id}/bottling/preview",
   "/v1/lots/{id}/bottling",
@@ -424,7 +425,16 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
     });
 
     await test.step("laboratorio conforme (metanol en mg/100 mL a.a., cobre y grado) y cierre del expediente con huella", async () => {
-      // El informe va por su URL (alias de `laboratoryReportKey` hasta H2, contrato §8.1).
+      // El informe firmado se sube antes (`POST /v1/uploads`) y el análisis lleva su `key`
+      // (contrato §8.1). Queda en el almacenamiento de la bodega de la ejecución.
+      const laboratoryReportKey = await enologist.upload(
+        {
+          name: `informe-${runId}.pdf`,
+          mimeType: "application/pdf",
+          buffer: Buffer.from("%PDF-1.4\n%E2E informe de laboratorio\n"),
+        },
+        "lab-reports",
+      );
       const lab = await enologist.post<{ conformityStatus: string }>(`/v1/lots/${lotId}/lab-analyses`, {
         certifiedLaboratoryName: LAB_NAME,
         accreditedLabCertificationCode: `LAB-E2E-${suffix}`,
@@ -434,7 +444,7 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         volatileAcidityAceticGl: 0.22,
         copperContentMgL: 0.02,
         methanolMg100mlAa: 12,
-        laboratoryReportPdfUrl: "https://laboratorio.example.test/informe-e2e.pdf",
+        laboratoryReportKey,
       });
       expect(lab.conformityStatus).toBe("CONFORMING");
 
