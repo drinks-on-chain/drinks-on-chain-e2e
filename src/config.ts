@@ -38,7 +38,8 @@ export const APPS: Record<AppName, AppDef> = {
     urlVar: "E2E_URL_ERP",
     port: 3102,
     enabledByDefault: true,
-    specs: /h0-.*\.spec\.ts$/,
+    // H0 y el recorrido de H2 por la interfaz del ERP (que termina en el visor del Marketplace).
+    specs: /(h0-.*|h2-recorrido)\.spec\.ts$/,
     readyPath: "/login",
     buildEnv: () => ({ ...common }),
   },

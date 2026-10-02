@@ -106,11 +106,13 @@ const WINERY_WORDS = [
  * `<tipo> <palabra> <palabra> <palabra> · <runId>`. El backend deriva el prefijo de lote (3–5
  * letras, único y definitivo, también en las bodegas revocadas) de las iniciales de las palabras
  * significativas del nombre, y un nombre fijo solo da unos 29 candidatos: se agotarían con las
- * ejecuciones. Las tres palabras salen de los tres últimos caracteres del prefijo de la ejecución.
+ * ejecuciones. Las tres palabras salen de los tres últimos caracteres del prefijo de la ejecución;
+ * `variant` las desplaza para que dos bodegas de la misma ejecución (otro recorrido, una segunda
+ * bodega) no compartan iniciales ni nombre.
  */
-export function runWineryName(runId: string, kind = "Destilería"): string {
+export function runWineryName(runId: string, kind = "Destilería", variant = 0): string {
   const words = Array.from(runId.slice(-3), (ch) => {
-    const index = /\d/.test(ch) ? Number(ch) : ch.toLowerCase().charCodeAt(0) - 97;
+    const index = (/\d/.test(ch) ? Number(ch) : ch.toLowerCase().charCodeAt(0) - 97) + variant;
     return WINERY_WORDS[((index % WINERY_WORDS.length) + WINERY_WORDS.length) % WINERY_WORDS.length] ?? "Alba";
   });
   return runName(runId, `${kind} ${words.join(" ")}`);
