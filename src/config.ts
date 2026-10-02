@@ -23,6 +23,8 @@ export interface AppDef {
   enabledByDefault: boolean;
   /** Recorridos (archivos de tests/) que arrancan en esta app. */
   specs: RegExp;
+  /** Ruta con la que se sabe que la app ya responde (las apps con sesión, su login). */
+  readyPath: string;
   /** Variables de build de la app contra el backend real (sin mocks). */
   buildEnv: (urls: Record<AppName, string>) => Record<string, string>;
 }
@@ -37,6 +39,7 @@ export const APPS: Record<AppName, AppDef> = {
     port: 3102,
     enabledByDefault: true,
     specs: /h0-.*\.spec\.ts$/,
+    readyPath: "/login",
     buildEnv: () => ({ ...common }),
   },
   backoffice: {
@@ -46,6 +49,7 @@ export const APPS: Record<AppName, AppDef> = {
     port: 3103,
     enabledByDefault: true,
     specs: /h1-.*\.spec\.ts$/,
+    readyPath: "/login",
     buildEnv: (u) => ({ ...common, NEXT_PUBLIC_URL_ERP: u.erp }),
   },
   marketplace: {
@@ -53,8 +57,13 @@ export const APPS: Record<AppName, AppDef> = {
     repo: "drinks-on-chain-marketplace",
     urlVar: "E2E_URL_MARKETPLACE",
     port: 3104,
-    enabledByDefault: false,
-    specs: /h[34]-.*\.spec\.ts$/,
+    enabledByDefault: true,
+    // El visor del pasaporte (H2) y, en las Olas 3–4, la tokenización y la compra.
+    specs: /(h2-pasaporte|h[34]-.*)\.spec\.ts$/,
+    // Sitio público sin sesión: no tiene /login.
+    readyPath: "/",
+    // Sin PROXY_SHARED_SECRET: el proxy de la app no firma la IP del visitante y el límite del
+    // pasaporte público cuenta por la IP de quien ejecuta la suite.
     buildEnv: () => ({ ...common }),
   },
   pos: {
@@ -64,6 +73,7 @@ export const APPS: Record<AppName, AppDef> = {
     port: 3105,
     enabledByDefault: false,
     specs: /h5-.*\.spec\.ts$/,
+    readyPath: "/login",
     buildEnv: () => ({ ...common }),
   },
   bodegas: {
@@ -73,6 +83,7 @@ export const APPS: Record<AppName, AppDef> = {
     port: 3100,
     enabledByDefault: false,
     specs: /bodegas-.*\.spec\.ts$/,
+    readyPath: "/",
     buildEnv: () => ({ API_ORIGIN }),
   },
 };

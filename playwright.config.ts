@@ -3,7 +3,7 @@ import { APPS, APP_NAMES, appEnabled, appUrl, type AppName } from "./src/config"
 
 // Un proyecto por aplicación (plan/04 §5). Cada recorrido de hito se asigna a la app donde
 // empieza (APPS[app].specs) y abre las demás con el fixture `openApp`. Los proyectos de olas
-// futuras (marketplace, pos, bodegas) existen pero están desactivados: E2E_ENABLE_<APP>=1.
+// futuras (pos, bodegas) existen pero están desactivados: E2E_ENABLE_<APP>=1.
 //
 // Las apps se levantan fuera (URL en E2E_URL_<APP>) o, con E2E_START_APPS=1, Playwright arranca
 // `pnpm apps serve <app>` sobre el build que dejó `pnpm apps prepare` (ver README).
@@ -42,7 +42,7 @@ function appsToServe(): AppName[] {
 
 const webServer: PlaywrightTestConfig["webServer"] = appsToServe().map((app) => ({
   command: `pnpm apps serve ${app}`,
-  url: `${appUrl(app)}/login`,
+  url: `${appUrl(app)}${APPS[app].readyPath}`,
   reuseExistingServer: !CI,
   timeout: 120_000,
   stdout: "ignore",
