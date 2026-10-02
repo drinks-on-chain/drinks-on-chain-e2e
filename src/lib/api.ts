@@ -164,6 +164,20 @@ export class ApiClient {
     return result.data as T;
   }
 
+  /**
+   * `GET` que devuelve el cuerpo tal cual, sin interpretar el envoltorio (p. ej. los bytes
+   * canónicos del expediente, que hay que recibir intactos para recalcular su huella).
+   */
+  async bytes(path: string): Promise<{ status: number; body: Buffer; headers: Record<string, string> }> {
+    const runId = process.env.E2E_RUN_ID ?? "e2e";
+    const headers: Record<string, string> = {
+      "X-Correlation-ID": `${runId}-${String(++correlation).padStart(4, "0")}`,
+    };
+    if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
+    const response = await this.context.fetch(path, { method: "GET", headers, failOnStatusCode: false });
+    return { status: response.status(), body: await response.body(), headers: response.headers() };
+  }
+
   get<T = unknown>(path: string, query?: Query) {
     return this.call<T>("GET", path, { query });
   }

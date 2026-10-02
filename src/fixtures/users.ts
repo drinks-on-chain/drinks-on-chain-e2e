@@ -56,6 +56,11 @@ export const WINERY = {
     organization: ORG.cinti,
     shellLabel: `Dirección · ${ORG.cinti}`,
   },
+  /** Enóloga de Cinti Viejo: crea lotes, vinifica, destila, embotella y cierra el expediente (H2). */
+  cintiEnologist: { email: "enologa@cintiviejo.test", role: "ENOLOGIST", organization: ORG.cinti },
+  /** Agrónomo de Cinti Viejo: dictamen fitosanitario (H2). */
+  cintiAgronomist: { email: "agronomo@cintiviejo.test", role: "AGRONOMIST", organization: ORG.cinti },
+  /** Operario de Cinti Viejo: pesajes y lecturas (H2). */
   cintiOperator: { email: "operario@cintiviejo.test", role: "OPERATOR", organization: ORG.cinti },
   /** Contadora con la membresía bloqueada por la plataforma. */
   cintiBlockedAccountant: { email: "contabilidad@cintiviejo.test", role: "ACCOUNTANT", organization: ORG.cinti },

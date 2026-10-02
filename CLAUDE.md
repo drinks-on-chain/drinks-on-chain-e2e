@@ -15,7 +15,14 @@ Pruebas entre aplicaciones de Drinks on Chain contra un entorno **compartido** (
 - Lo único que sale de una ejecución (consola de CI, que es pública, y artefacto `resumen-e2e-*`) es el resumen de `src/reporters/summary.ts`: prueba, paso y mensaje de error, pasados por `redact()` (`src/lib/redact.ts`, con pruebas unitarias), que quita `E2E_PASSWORD`, `E2E_TOTP_SECRET`, `Bearer …`, `doc_rt=…`, JWT, campos JSON de tokens y secretos, enlaces con `token=` o de invitación, secretos TOTP en base32 y códigos de recuperación. Si añades un tipo de secreto, añádelo al filtro y a su prueba.
 - Para depurar **en local**: `E2E_DEBUG_ARTIFACTS=1` activa trazas, capturas, vídeo e informe HTML. Prohibido en CI (la configuración falla) y esos archivos no se comparten ni se suben a ningún sitio.
 - Las contraseñas de las personas que crea la suite salen de `runPassword()` (`Pw-e2e-…`, que el filtro reconoce).
-- **Ninguna cuenta creada por una prueba queda activa**: cada recorrido que crea personas o usuarios internos tiene un `test.afterAll` (corre también si la prueba falla) que llama a `deactivateRunAccounts()` con la sesión ADMIN de demo: bloquea la cuenta completa de cada `+<runId>@` y anula sus invitaciones pendientes, y comprueba que no queda ninguna activa. Para una ejecución antigua: `pnpm cleanup <runId>`.
+- **Ninguna cuenta creada por una prueba queda activa**: cada recorrido que crea personas o usuarios internos tiene un `test.afterAll` (corre también si la prueba falla) que llama a `deactivateRunAccounts()` con la sesión ADMIN de demo: bloquea la cuenta completa de cada `+<runId>@` y anula sus invitaciones pendientes, y comprueba que no queda ninguna activa. Para una ejecución antigua: `pnpm cleanup <runId> [<runId>…]` (o la entrada `cleanup` del workflow E2E).
+
+## Limpieza de datos
+
+- **Ninguna bodega creada por una prueba queda en la lista pública** (`GET /v1/public/wineries`, que pintan los sitios públicos): el mismo `afterAll` llama a `retireRunWineries()`, que revoca con motivo cada bodega `… · <runId>` y comprueba la lista pública. Siempre por la API de plataforma; nunca borrando filas ni tocando una bodega sin el prefijo.
+- **Lotes** en una bodega de demostración: llevan el `runId` en el nombre y el `afterAll` descarta (`discardRunLots()`) los que no llegaron a cerrar su expediente. Un lote `CERTIFIED` es terminal para la API: se queda y se dice en el README.
+- Un recorrido usa una botella distinta para cada comprobación que cambia su estado (p. ej. la anulación) y abre el visor después del cambio: el pasaporte público se cachea 60 s.
+- El pasaporte público frena la enumeración (más de 20 códigos inexistentes por IP en 10 minutos): un recorrido hace como mucho **una** consulta de un código inexistente y no prueba el 429.
 
 ## Secretos
 

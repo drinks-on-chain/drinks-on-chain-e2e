@@ -12,9 +12,30 @@ import { fillLogin, logout, settled, shellUser, trackErrors } from "../src/lib/p
 // Solo lecturas: el 422 del perfil no guarda nada y no se crea ningún dato. Un solo worker (ver
 // playwright.config.ts) para no rozar los límites del backend (login 10/min por IP).
 
-/** El panel del ERP cargó sus datos (sin ErrorState por contrato roto, red o servidor). */
-async function dashboardLoaded(page: Page) {
-  await expect(page.getByText("Tareas pendientes", { exact: true }), "panel con datos del backend").toBeVisible();
+/**
+ * El panel del ERP cargó sus datos (sin ErrorState por contrato roto, red o servidor). Si no, el
+ * error dice qué pinta el panel (el ErrorState distingue "datos inesperados", es decir, una
+ * respuesta que no cumple el esquema de la app, de un fallo del servidor o de la red) y qué
+ * respuestas ≥ 400 y errores de consola hubo hasta ese momento (`errors`, de `trackErrors`).
+ */
+async function dashboardLoaded(page: Page, errors: readonly string[]) {
+  try {
+    await expect(page.getByText("Tareas pendientes", { exact: true }), "panel con datos del backend").toBeVisible();
+  } catch (error) {
+    const shown = await page
+      .getByRole("alert")
+      .allInnerTexts()
+      .catch(() => []);
+    const onScreen = shown.map((text) => text.replace(/\s+/g, " ").trim()).filter(Boolean);
+    throw new Error(
+      [
+        error instanceof Error ? error.message : String(error),
+        `En pantalla (alertas): ${onScreen.join(" | ") || "ninguna"}`,
+        `Respuestas ≥ 400 y errores de consola: ${errors.join(" | ") || "ninguno"}`,
+      ].join("\n"),
+      { cause: error },
+    );
+  }
   await expect(page.getByText("No se pudo cargar"), "panel sin ErrorState").toHaveCount(0);
 }
 
@@ -74,7 +95,7 @@ test("dueño de Altos: login, renovación tras recargar, parcelas, 422 por campo
     await expect(page).not.toHaveURL(/\/login/, { timeout: 20_000 });
     await expect(shellUser(page)).toContainText(WINERY.altosOwner.shellLabel);
     await settled(page);
-    await dashboardLoaded(page);
+    await dashboardLoaded(page, errors);
   });
 
   await test.step("la cookie de renovación doc_rt es de primera parte y HttpOnly", async () => {
@@ -163,7 +184,7 @@ test("Sofía cambia de organización entre una bodega suspendida y una activa", 
   await expect(page.getByText(`Ahora trabajas en ${ORG.altos}.`, { exact: true })).toBeVisible();
   await expect(shellUser(page)).toContainText(WINERY.sofia.shellLabel);
   await settled(page);
-  await dashboardLoaded(page);
+  await dashboardLoaded(page, errors);
 
   // Permisos de la membresía activa (enóloga): lee las parcelas, no las da de alta.
   await page.getByRole("link", { name: "Origen y terroirs", exact: true }).first().click();
