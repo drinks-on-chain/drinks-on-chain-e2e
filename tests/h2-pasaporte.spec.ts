@@ -115,6 +115,28 @@ interface PublicBottle {
   lot: PublicLot;
 }
 
+/**
+ * Resultados posibles de la comprobación de la botella contra el expediente, por el texto con que
+ * el visor los pinta. Solo `verified` es el correcto para una botella activa de un lote cerrado.
+ */
+const PROOF_OUTCOMES = {
+  verified: "Este código pertenece al expediente cerrado",
+  "mismatch-root": "No pudimos confirmar este código",
+  "mismatch-hash": "El expediente no coincide con su huella",
+  failed: "No pudimos descargar el expediente para comprobar el código",
+  unsupported: "Este navegador no permite hacer la comprobación aquí",
+  "dossier-open": "La bodega aún no cerró el expediente de este lote",
+} as const;
+
+/** Resultados de la comprobación que el visor muestra ahora (vacío mientras comprueba). */
+async function proofOutcomes(page: Page): Promise<string[]> {
+  const shown: string[] = [];
+  for (const [outcome, text] of Object.entries(PROOF_OUTCOMES)) {
+    if ((await page.getByText(text).count()) > 0) shown.push(outcome);
+  }
+  return shown;
+}
+
 /** Sección del pasaporte por su título (`<section aria-labelledby>`). */
 const section = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
 
@@ -526,13 +548,16 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
 
       // El navegador descarga el expediente canónico (`dossier.canonicalUrl`), recalcula su huella
       // y la raíz Merkle desde la botella. Comprobación blanda: si el visor no lo consigue contra
-      // el backend real, el recorrido sigue (anulación y código inexistente) y termina en rojo.
+      // el backend real, el error dice qué resultado pintó, y el recorrido sigue (anulación y
+      // código inexistente) y termina en rojo.
       await expect
-        .soft(
-          page.getByText("Este código pertenece al expediente cerrado"),
-          "el visor comprueba la botella contra el expediente cerrado (dossier.canonicalUrl + prueba Merkle)",
-        )
-        .toBeVisible();
+        .configure({ soft: true })
+        .poll(() => proofOutcomes(page), {
+          message:
+            "resultado de la comprobación de la botella contra el expediente cerrado en el visor (huella del expediente canónico + raíz Merkle desde la botella)",
+          timeout: 20_000,
+        })
+        .toEqual(["verified"]);
     });
 
     await test.step("la enóloga anula una botella por la API y el visor lo avisa", async () => {
@@ -548,7 +573,7 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       await expect(page.getByText(`Botella n.º ${VOIDED_SERIAL} de 2.950`, { exact: true })).toBeVisible();
       await expect(page.getByRole("main").getByText(voided?.codeFormatted ?? "", { exact: true })).toBeVisible();
       // Un código anulado no presume de pertenecer al expediente.
-      await expect(page.getByText("Este código pertenece al expediente cerrado")).toHaveCount(0);
+      await expect(page.getByText(PROOF_OUTCOMES.verified)).toHaveCount(0);
     });
 
     await test.step("un código inexistente (una sola consulta) → no encontrado", async () => {
