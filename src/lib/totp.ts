@@ -1,4 +1,7 @@
 import { createHmac } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Códigos TOTP (RFC 6238: HMAC-SHA1, 6 dígitos, pasos de 30 s) a partir de un secreto base32,
 // como los genera la app de autenticación del personal de plataforma. Sin dependencias.
@@ -50,22 +53,62 @@ export function totpRemainingMs(now: number = Date.now()): number {
 /** Último código entregado por `freshTotp` para cada secreto (el backend no admite repetirlo). */
 const lastIssued = new Map<string, string>();
 
+const normalize = (secret: string) => secret.replace(/[\s=]/g, "").toUpperCase();
+
 /**
- * Código TOTP que seguirá valiendo al menos `marginMs` y que no se ha usado ya en este proceso con
- * el mismo secreto (un código TOTP es de un solo uso): si hace falta, espera al siguiente paso de
+ * Archivo donde los procesos de una ejecución (un worker por proyecto, la limpieza) anotan el
+ * último paso de 30 s en que se entregó un código del secreto **de demostración**: un worker que
+ * arranca justo después de que otro lo usara no puede repetir ese código. Solo guarda el número
+ * del paso, nunca el secreto ni el código. `null` sin `E2E_RUN_ID` (pruebas unitarias sueltas).
+ */
+export function sharedTotpFile(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.E2E_TOTP_STATE_FILE) return env.E2E_TOTP_STATE_FILE;
+  return env.E2E_RUN_ID ? join(tmpdir(), `drinks-on-chain-e2e-totp-${env.E2E_RUN_ID}.json`) : null;
+}
+
+/** Último paso anotado en el archivo compartido (−1 si no hay archivo o no se entiende). */
+export function readSharedStep(file: string | null): number {
+  if (!file) return -1;
+  try {
+    const step = (JSON.parse(readFileSync(file, "utf8")) as { step?: unknown }).step;
+    return typeof step === "number" && Number.isFinite(step) ? step : -1;
+  } catch {
+    return -1;
+  }
+}
+
+function writeSharedStep(file: string | null, step: number): void {
+  if (!file) return;
+  try {
+    writeFileSync(file, JSON.stringify({ step }));
+  } catch {
+    // Sin archivo compartido solo queda la memoria de este proceso.
+  }
+}
+
+/** ¿`secret` es el del personal de plataforma de la semilla (E2E_TOTP_SECRET)? */
+const isDemoSecret = (key: string) => key !== "" && key === normalize(process.env.E2E_TOTP_SECRET ?? "");
+
+/**
+ * Código TOTP que seguirá valiendo al menos `marginMs` y que no se ha usado ya con el mismo
+ * secreto (un código TOTP es de un solo uso): ni en este proceso ni, para el secreto de
+ * demostración, en otro proceso de la misma ejecución. Si hace falta, espera al siguiente paso de
  * 30 s. Úsalo antes de teclear o enviar un código.
  */
 export async function freshTotp(secret: string, marginMs = 3_000): Promise<string> {
-  const key = secret.replace(/[\s=]/g, "").toUpperCase();
+  const key = normalize(secret);
+  const shared = isDemoSecret(key) ? sharedTotpFile() : null;
   for (;;) {
     const left = totpRemainingMs();
     if (left < marginMs) {
       await new Promise((r) => setTimeout(r, left + 200));
       continue;
     }
+    const step = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS);
     const code = totp(key);
-    if (lastIssued.get(key) !== code) {
+    if (lastIssued.get(key) !== code && readSharedStep(shared) < step) {
       lastIssued.set(key, code);
+      writeSharedStep(shared, step);
       return code;
     }
     await new Promise((r) => setTimeout(r, left + 200));
