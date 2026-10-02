@@ -207,9 +207,19 @@ export class ApiClient {
     const { mfaToken, enrolled } = first.mfa;
     if (enrolled) {
       if (!totpSecret) throw new Error(`${email} necesita un código TOTP y no hay secreto (E2E_TOTP_SECRET)`);
-      return this.adopt(
-        await this.post<LoginResult>("/v1/auth/mfa/verify", { mfaToken, code: await freshTotp(totpSecret) }),
-      );
+      const verify = async () =>
+        this.raw<LoginResult>("POST", "/v1/auth/mfa/verify", {
+          body: { mfaToken, code: await freshTotp(totpSecret) },
+        });
+      let verified = await verify();
+      // Un código TOTP es de un solo uso y `freshTotp` solo recuerda los de este proceso: si otro
+      // proceso (otro worker, la limpieza) acaba de usar el del paso actual, el backend lo rechaza.
+      // Se repite una vez con el código del paso siguiente, sin otro inicio de sesión.
+      if (!verified.ok && verified.status >= 400 && verified.status < 500) verified = await verify();
+      if (!verified.ok || !verified.data) {
+        throw new ApiError("POST", "/v1/auth/mfa/verify", verified.status, verified.error);
+      }
+      return this.adopt(verified.data);
     }
     const { secret } = await this.post<{ otpauthUrl: string; secret: string }>("/v1/auth/mfa/enroll", { mfaToken });
     this.enrolledSecret = secret;

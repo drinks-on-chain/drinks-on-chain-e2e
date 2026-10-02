@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { currentRunId, isRunId, newRunId, runEmail, runName, runTaxId } from "./run-id";
+import { currentRunId, isRunId, newRunId, runEmail, runName, runTaxId, runWineryName } from "./run-id";
 
 describe("run-id", () => {
   const saved = process.env.E2E_RUN_ID;
@@ -33,5 +33,19 @@ describe("run-id", () => {
     expect(runTaxId(id)).toMatch(/^9\d{9}$/);
     expect(runTaxId(id, "a")).not.toBe(runTaxId(id, "b"));
     expect(runTaxId(id, "a")).toBe(runTaxId(id, "a"));
+  });
+  it("nombre de bodega con tres palabras cuyas iniciales cambian con la ejecución", () => {
+    expect(runWineryName("e2e-20261002t1506-567801")).toBe("Destilería Isla Alba Brisa · e2e-20261002t1506-567801");
+    expect(runWineryName("e2e-20260927t1630-k3v9q2", "Bodega")).toBe(
+      "Bodega Jara Quebrada Cumbre · e2e-20260927t1630-k3v9q2",
+    );
+    const initials = (name: string) =>
+      name
+        .split(" ")
+        .slice(1, 4)
+        .map((w) => w[0])
+        .join("");
+    expect(initials(runWineryName("e2e-20261002t1506-567801"))).toBe("IAB");
+    expect(initials(runWineryName("e2e-20261002t1506-567802"))).toBe("IAC");
   });
 });
