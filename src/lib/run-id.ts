@@ -70,3 +70,50 @@ export function runTaxId(runId: string, salt = ""): string {
 export function runPassword(): string {
   return `Pw-e2e-${randomBytes(9).toString("hex")}`;
 }
+
+/** Una palabra por letra: las iniciales de tres de ellas dan el prefijo de lote de la bodega. */
+const WINERY_WORDS = [
+  "Alba",
+  "Brisa",
+  "Cumbre",
+  "Duna",
+  "Ermita",
+  "Faro",
+  "Gruta",
+  "Huerta",
+  "Isla",
+  "Jara",
+  "Kantuta",
+  "Loma",
+  "Mesa",
+  "Nogal",
+  "Oasis",
+  "Pampa",
+  "Quebrada",
+  "Ribera",
+  "Sierra",
+  "Tuna",
+  "Umbral",
+  "Vega",
+  "Wara",
+  "Xara",
+  "Yunga",
+  "Zarza",
+] as const;
+
+/**
+ * Nombre comercial de una bodega creada por la ejecución, con un **prefijo de lote propio**:
+ * `<tipo> <palabra> <palabra> <palabra> · <runId>`. El backend deriva el prefijo de lote (3–5
+ * letras, único y definitivo, también en las bodegas revocadas) de las iniciales de las palabras
+ * significativas del nombre, y un nombre fijo solo da unos 29 candidatos: se agotarían con las
+ * ejecuciones. Las tres palabras salen de los tres últimos caracteres del prefijo de la ejecución;
+ * `variant` las desplaza para que dos bodegas de la misma ejecución (otro recorrido, una segunda
+ * bodega) no compartan iniciales ni nombre.
+ */
+export function runWineryName(runId: string, kind = "Destilería", variant = 0): string {
+  const words = Array.from(runId.slice(-3), (ch) => {
+    const index = (/\d/.test(ch) ? Number(ch) : ch.toLowerCase().charCodeAt(0) - 97) + variant;
+    return WINERY_WORDS[((index % WINERY_WORDS.length) + WINERY_WORDS.length) % WINERY_WORDS.length] ?? "Alba";
+  });
+  return runName(runId, `${kind} ${words.join(" ")}`);
+}

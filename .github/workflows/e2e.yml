@@ -2,15 +2,19 @@ name: E2E
 
 # Recorridos de los hitos contra el entorno de desarrollo (plan/04 §5). Las apps se construyen
 # aquí mismo desde sus repos públicos, SIN mocks y con API_ORIGIN = backend de desarrollo, y se
-# sirven con `next start` en puertos locales (ERP 3102, Backoffice 3103): no dependen de las
-# previews de Vercel (protegidas con SSO). Los correos se leen en Mailpit por ssh con una llave de
-# comando forzado (solo `GET /api/v1/<ruta>` y `DELETE /api/v1/messages`).
+# sirven con `next start` en puertos locales (ERP 3102, Backoffice 3103, Marketplace 3104): no
+# dependen de las previews de Vercel (protegidas con SSO). Los correos se leen en Mailpit por ssh
+# con una llave de comando forzado (solo `GET /api/v1/<ruta>` y `DELETE /api/v1/messages`).
+#
+# Con la entrada `cleanup` no se ejecuta ningún recorrido: solo se limpian las ejecuciones
+# indicadas (`pnpm cleanup`: cuentas bloqueadas, bodegas fuera de la lista pública, lotes
+# descartados), por si su afterAll no llegó a correr.
 
 on:
   workflow_dispatch:
     inputs:
       specs:
-        description: "Recorridos (filtro de Playwright: h0-, h1-, 'h0- h1-'; vacío = todos)"
+        description: "Recorridos (filtro de Playwright: h0-, h1-, h2-, h2-pasaporte, h2-recorrido, 'h0- h1-'; vacío = todos)"
         required: false
         default: "h0-"
       erp_ref:
@@ -21,6 +25,14 @@ on:
         description: "Rama o etiqueta del Backoffice"
         required: false
         default: dev
+      marketplace_ref:
+        description: "Rama o etiqueta del Marketplace"
+        required: false
+        default: dev
+      cleanup:
+        description: "Solo limpiar estas ejecuciones anteriores (prefijos e2e-… separados por espacio); no ejecuta recorridos"
+        required: false
+        default: ""
       api_origin:
         description: "Origen del backend"
         required: false
@@ -52,6 +64,8 @@ jobs:
       SPECS: ${{ github.event_name == 'schedule' && 'h0-' || inputs.specs || github.event.client_payload.specs || '' }}
       E2E_REF_ERP: ${{ inputs.erp_ref || github.event.client_payload.erp_ref || 'dev' }}
       E2E_REF_BACKOFFICE: ${{ inputs.backoffice_ref || github.event.client_payload.backoffice_ref || 'dev' }}
+      E2E_REF_MARKETPLACE: ${{ inputs.marketplace_ref || github.event.client_payload.marketplace_ref || 'dev' }}
+      CLEANUP_RUN_IDS: ${{ inputs.cleanup || github.event.client_payload.cleanup || '' }}
       E2E_API_ORIGIN: ${{ inputs.api_origin || github.event.client_payload.api_origin || 'https://136.243.223.39.sslip.io' }}
       E2E_MAILPIT_SSH: e2e-mailpit
       E2E_MAILPIT_SSH_MODE: api
@@ -64,14 +78,40 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      # Solo limpieza: bloquea las cuentas, revoca las bodegas (salen de la lista pública) y
+      # descarta los lotes de ejecuciones anteriores. El script valida la forma de cada prefijo.
+      - name: Limpieza de ejecuciones anteriores
+        if: env.CLEANUP_RUN_IDS != ''
+        env:
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+          E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
+        run: |
+          set -o pipefail
+          pnpm --silent cleanup "$CLEANUP_RUN_IDS" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Prefijo de la ejecución y apps necesarias
+        if: env.CLEANUP_RUN_IDS == ''
         run: |
           echo "E2E_RUN_ID=e2e-$(date -u +%Y%m%dt%H%M)-${GITHUB_RUN_ID: -6}" >> "$GITHUB_ENV"
-          # H0 solo necesita el ERP; el resto de recorridos, ERP y Backoffice.
-          if [ "$(echo "$SPECS" | xargs)" = "h0-" ]; then apps=erp; else apps=erp,backoffice; fi
+          # Apps de cada recorrido: H0, el ERP; H1, ERP y Backoffice; el pasaporte de H2, el
+          # Marketplace; el recorrido de H2, ERP y Marketplace. Sin filtro o con un filtro que no
+          # se conoce (p. ej. `h2-`), todas.
+          apps=""
+          add() { case ",$apps," in *",$1,"*) ;; *) apps="${apps:+$apps,}$1" ;; esac; }
+          for spec in ${SPECS:-todos}; do
+            case "$spec" in
+              h0-*) add erp ;;
+              h1-*) add erp; add backoffice ;;
+              h2-pasaporte*) add marketplace ;;
+              h2-recorrido*) add erp; add marketplace ;;
+              *) add erp; add backoffice; add marketplace ;;
+            esac
+          done
           echo "E2E_APPS=$apps" >> "$GITHUB_ENV"
+          echo "Apps: $apps"
 
       - name: Llave del buzón (Mailpit, comando forzado)
+        if: env.CLEANUP_RUN_IDS == ''
         env:
           MAILPIT_KEY: ${{ secrets.DEV_MAILPIT_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
@@ -96,11 +136,14 @@ jobs:
           echo "Buzón accesible con la llave restringida."
 
       - name: Construir las apps sin mocks (${{ env.E2E_APPS }})
+        if: env.CLEANUP_RUN_IDS == ''
         run: pnpm apps prepare ${E2E_APPS//,/ } --source=github
 
-      - run: pnpm exec playwright install --with-deps chromium
+      - if: env.CLEANUP_RUN_IDS == ''
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Recorridos
+        if: env.CLEANUP_RUN_IDS == ''
         env:
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
           E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
@@ -112,19 +155,19 @@ jobs:
       # Ningún artefacto con datos de sesión: ni informe HTML, ni trazas, ni capturas, ni
       # test-results/. Solo el resumen de texto filtrado por redact() (src/reporters/summary.ts).
       - name: Resumen
-        if: always()
+        if: always() && env.CLEANUP_RUN_IDS == ''
         run: |
           {
             echo "### E2E · $E2E_RUN_ID"
             echo ""
             echo "- Recorridos: \`${SPECS:-todos}\` · apps: \`$E2E_APPS\`"
-            echo "- ERP \`$E2E_REF_ERP\` · Backoffice \`$E2E_REF_BACKOFFICE\` · backend \`$E2E_API_ORIGIN\`"
+            echo "- ERP \`$E2E_REF_ERP\` · Backoffice \`$E2E_REF_BACKOFFICE\` · Marketplace \`$E2E_REF_MARKETPLACE\` · backend \`$E2E_API_ORIGIN\`"
             echo ""
             if [ -f e2e-summary/resumen.md ]; then cat e2e-summary/resumen.md; fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && env.CLEANUP_RUN_IDS == ''
         with:
           name: resumen-e2e-${{ env.E2E_RUN_ID }}
           path: e2e-summary

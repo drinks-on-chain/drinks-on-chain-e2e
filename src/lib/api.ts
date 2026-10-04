@@ -1,5 +1,6 @@
 import { request, type APIRequestContext, type APIResponse } from "@playwright/test";
 import { API_ORIGIN } from "../config";
+import { paceLogin } from "./login-pace";
 import { freshTotp } from "./totp";
 
 // Cliente directo contra el backend para preparar datos y comprobar estados sin pasar por una
@@ -164,6 +165,45 @@ export class ApiClient {
     return result.data as T;
   }
 
+  /**
+   * Sube un archivo a la organización activa (`POST /v1/uploads`, multipart) y devuelve su
+   * `key`, que es lo que guardan los registros (p. ej. `laboratoryReportKey`). El backend reconoce
+   * el tipo por el contenido: un PDF debe empezar por `%PDF-`.
+   */
+  async upload(file: { name: string; mimeType: string; buffer: Buffer }, folder: string): Promise<string> {
+    const runId = process.env.E2E_RUN_ID ?? "e2e";
+    const headers: Record<string, string> = {
+      "X-Correlation-ID": `${runId}-${String(++correlation).padStart(4, "0")}`,
+    };
+    if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
+    const response = await this.context.fetch("/v1/uploads", {
+      method: "POST",
+      headers,
+      params: { folder },
+      multipart: { file },
+      failOnStatusCode: false,
+    });
+    const envelope = (await response.json().catch(() => undefined)) as Envelope<{ key: string }> | undefined;
+    if (!response.ok() || !envelope?.data?.key) {
+      throw new ApiError("POST", "/v1/uploads", response.status(), envelope?.error);
+    }
+    return envelope.data.key;
+  }
+
+  /**
+   * `GET` que devuelve el cuerpo tal cual, sin interpretar el envoltorio (p. ej. los bytes
+   * canónicos del expediente, que hay que recibir intactos para recalcular su huella).
+   */
+  async bytes(path: string): Promise<{ status: number; body: Buffer; headers: Record<string, string> }> {
+    const runId = process.env.E2E_RUN_ID ?? "e2e";
+    const headers: Record<string, string> = {
+      "X-Correlation-ID": `${runId}-${String(++correlation).padStart(4, "0")}`,
+    };
+    if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
+    const response = await this.context.fetch(path, { method: "GET", headers, failOnStatusCode: false });
+    return { status: response.status(), body: await response.body(), headers: response.headers() };
+  }
+
   get<T = unknown>(path: string, query?: Query) {
     return this.call<T>("GET", path, { query });
   }
@@ -188,14 +228,25 @@ export class ApiClient {
    * secreto nuevo en `enrolledSecret`.
    */
   async login(email: string, password: string, totpSecret?: string): Promise<LoginResult> {
+    await paceLogin();
     const first = await this.call<LoginResult>("POST", "/v1/auth/login", { body: { email, password } });
     if (!first.mfa?.required) return this.adopt(first);
     const { mfaToken, enrolled } = first.mfa;
     if (enrolled) {
       if (!totpSecret) throw new Error(`${email} necesita un código TOTP y no hay secreto (E2E_TOTP_SECRET)`);
-      return this.adopt(
-        await this.post<LoginResult>("/v1/auth/mfa/verify", { mfaToken, code: await freshTotp(totpSecret) }),
-      );
+      const verify = async () =>
+        this.raw<LoginResult>("POST", "/v1/auth/mfa/verify", {
+          body: { mfaToken, code: await freshTotp(totpSecret) },
+        });
+      let verified = await verify();
+      // Un código TOTP es de un solo uso y `freshTotp` solo recuerda los de este proceso: si otro
+      // proceso (otro worker, la limpieza) acaba de usar el del paso actual, el backend lo rechaza.
+      // Se repite una vez con el código del paso siguiente, sin otro inicio de sesión.
+      if (!verified.ok && verified.status >= 400 && verified.status < 500) verified = await verify();
+      if (!verified.ok || !verified.data) {
+        throw new ApiError("POST", "/v1/auth/mfa/verify", verified.status, verified.error);
+      }
+      return this.adopt(verified.data);
     }
     const { secret } = await this.post<{ otpauthUrl: string; secret: string }>("/v1/auth/mfa/enroll", { mfaToken });
     this.enrolledSecret = secret;

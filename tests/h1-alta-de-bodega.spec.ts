@@ -3,10 +3,10 @@ import { CAPTCHA_TEST_TOKEN, DEMO_PASSWORD, DEMO_TOTP_SECRET } from "../src/conf
 import { expect, needsDemoPassword, test } from "../src/fixtures/test";
 import { ORG, PLATFORM } from "../src/fixtures/users";
 import { ApiClient, missingRoutes, type LoginResult, type Membership, type Page as ListPage } from "../src/lib/api";
-import { deactivateRunAccounts } from "../src/lib/cleanup";
+import { deactivateRunAccounts, retireRunWineries } from "../src/lib/cleanup";
 import { MAILBOX_HELP, tokenFromLink } from "../src/lib/mailbox";
 import { fillLogin, settled, shellUser, trackErrors } from "../src/lib/page";
-import { runEmail, runName, runPassword, runTaxId } from "../src/lib/run-id";
+import { runEmail, runName, runPassword, runTaxId, runWineryName } from "../src/lib/run-id";
 import { freshTotp } from "../src/lib/totp";
 
 // H1 · Alta de bodega (PLAN-MAESTRO, hito H1; contrato plan/contratos/o1-backoffice-y-bodegas.md):
@@ -114,19 +114,23 @@ test.describe("H1 · de cero a bodega con equipo", () => {
     }
   });
 
-  // Al terminar (también si la prueba falla): ninguna cuenta creada por la ejecución queda activa.
-  // Bloquea con la sesión ADMIN de demo la cuenta completa de cada persona `+<runId>@` y anula sus
-  // invitaciones pendientes.
+  // Al terminar (también si la prueba falla): ninguna cuenta creada por la ejecución queda activa
+  // y ninguna de sus bodegas queda en la lista pública. Con la sesión ADMIN de demo, bloquea la
+  // cuenta completa de cada persona `+<runId>@`, anula sus invitaciones pendientes y revoca con
+  // motivo las bodegas `… · <runId>` (`GET /v1/public/wineries` solo lista las ACTIVE).
   test.afterAll(async ({ runId }) => {
     if (openApiError !== null || missing.length > 0 || !DEMO_PASSWORD || !DEMO_TOTP_SECRET) return;
     const admin = await ApiClient.create(`${runId} limpieza`);
     try {
       await admin.login(PLATFORM.admin.email, DEMO_PASSWORD, DEMO_TOTP_SECRET);
-      const result = await deactivateRunAccounts(admin, runId, `Fin del recorrido E2E ${runId}`);
+      const reason = `Fin del recorrido E2E ${runId}`;
+      const result = await deactivateRunAccounts(admin, runId, reason);
+      const wineries = await retireRunWineries(admin, runId, reason);
       console.log(
-        `Limpieza ${runId}: ${result.blocked.length} cuenta(s) bloqueadas, ${result.alreadyBlocked.length} ya bloqueadas, ${result.revokedInvitations.length} invitación(es) anuladas`,
+        `Limpieza ${runId}: ${result.blocked.length} cuenta(s) bloqueadas, ${result.alreadyBlocked.length} ya bloqueadas, ${result.revokedInvitations.length} invitación(es) anuladas, ${wineries.revoked.length} bodega(s) revocadas`,
       );
       expect(result.remaining, "cuentas de la ejecución que siguen activas").toEqual([]);
+      expect(wineries.stillPublic, "bodegas de la ejecución que siguen en la lista pública").toEqual([]);
     } finally {
       await admin.logout();
       await admin.dispose();
@@ -157,7 +161,10 @@ test.describe("H1 · de cero a bodega con equipo", () => {
     const enologist = { email: runEmail(runId, "enologa"), name: `Enóloga ${runId}` };
     const operator = { email: runEmail(runId, "operario"), name: `Operario ${runId}` };
     const direct = { email: runEmail(runId, "dueno-directo"), name: `Dueño directo ${runId}` };
-    const tradeName = runName(runId, "Bodega Norte");
+    // La bodega de la solicitud llega a activarse y consume un prefijo de lote único y definitivo:
+    // su nombre cambia de iniciales con la ejecución. La del alta directa no se activa (nadie
+    // acepta su invitación), así que no gasta prefijo y conserva un nombre fijo.
+    const tradeName = runWineryName(runId, "Bodega", 1);
     const directTradeName = runName(runId, "Bodega Sur");
     const blockReason = `Bloqueo de prueba ${runId}`;
 
