@@ -472,12 +472,10 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       expect(CLOSED_STAGES, "etapa del lote con el expediente cerrado").toContain(
         (await enologist.get<Lot>(`/v1/lots/${lotId}`)).stage,
       );
-      test
-        .info()
-        .annotations.push({
-          type: "lote",
-          description: `${lotCode} · expediente cerrado en la bodega de la ejecución`,
-        });
+      test.info().annotations.push({
+        type: "lote",
+        description: `${lotCode} · expediente cerrado en la bodega de la ejecución`,
+      });
     });
 
     await test.step("pasaporte público por la API: huella recalculable y prueba Merkle de la botella", async () => {
