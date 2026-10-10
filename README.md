@@ -22,6 +22,8 @@ Todo en verde en una sola pasada de CI (`37043627566`, `h0- h1- h2-`; ERP `28393
 | H1             | ≈ 45–75 s | Incluye la espera al siguiente código TOTP cuando otro worker acaba de usar el vigente |
 | H2 · pasaporte | ≈ 25–45 s | —                                                                                      |
 
+**10-10-2026** · Con el backend de la Ola 3 ya desplegado en desarrollo (declara sus rutas, pero con la cadena **sin configurar**: el registro público no da cuentas de plataforma ni el código del contrato) y las apps de `dev`, `h0- h1- h2-` pasan en verde (CI E2E `38069250989`, 7/7). H2 se adaptó a lo que cambió: la huella del expediente en el ERP, la sección «Anclaje en la red» del visor y la etapa `ANCHORED`. H3 no se ha ejecutado: en ese estado se marca `fixme` sin crear nada.
+
 ## Cómo funciona
 
 - **Playwright + TypeScript** (Node 22, pnpm). Un **proyecto por aplicación** (`erp`, `backoffice`, `marketplace`; `pos` y `bodegas` preparados y desactivados). Cada recorrido se asigna a la app donde empieza (H0 y el recorrido de H2, al ERP; H1, al Backoffice; el pasaporte de H2, al Marketplace) y abre las demás con el fixture `openApp(app)`, que da además un navegador propio a cada persona.
