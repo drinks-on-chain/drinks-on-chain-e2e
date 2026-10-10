@@ -14,6 +14,7 @@
     "e2e:h2": "playwright test h2-",
     "e2e:h2-pasaporte": "playwright test h2-pasaporte",
     "e2e:h2-recorrido": "playwright test h2-recorrido",
+    "e2e:h3": "playwright test h3-",
     "report": "playwright show-report",
     "apps": "tsx scripts/apps.ts",
     "mailbox": "tsx scripts/mailbox.ts",
@@ -28,6 +29,7 @@
   "devDependencies": {
     "@eslint/js": "9.39.5",
     "@playwright/test": "1.63.0",
+    "@stellar/stellar-sdk": "17.2.1",
     "@types/node": "^22.20.4",
     "eslint": "9.39.5",
     "eslint-plugin-playwright": "^2.12.0",
