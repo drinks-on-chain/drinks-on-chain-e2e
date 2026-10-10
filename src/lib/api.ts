@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { request, type APIRequestContext, type APIResponse } from "@playwright/test";
 import { API_ORIGIN } from "../config";
 import { paceLogin } from "./login-pace";
@@ -11,6 +12,10 @@ import { freshTotp } from "./totp";
 export interface FieldError {
   field: string | null;
   message: string;
+  /** Código de la regla incumplida (`TRC_…`, `TOK_…`), cuando el detalle es de una regla. */
+  code?: string;
+  expected?: unknown;
+  actual?: unknown;
 }
 
 export interface ErrorBody {
@@ -87,6 +92,12 @@ export interface RequestOptions {
   body?: unknown;
   query?: Query;
   headers?: Record<string, string>;
+  /**
+   * `Idempotency-Key` de la petición (A-33): `true` genera una clave nueva; un texto la fija (para
+   * repetir la misma operación). El OpenAPI dice qué operaciones la exigen (p. ej. autorizar,
+   * aprobar, publicar, pausar y reanudar en la Ola 3).
+   */
+  idempotencyKey?: string | true;
 }
 
 let correlation = 0;
@@ -97,6 +108,12 @@ export class ApiClient {
   session: LoginResult | null = null;
   /** Secreto TOTP inscrito por `login` para una persona que aún no lo tenía. */
   enrolledSecret: string | null = null;
+  /**
+   * Recorridos largos (H3 espera a la red durante minutos): si el acceso caduca (401), se renueva
+   * una vez con la cookie `doc_rt` y se repite la petición. Apagado por defecto: los recorridos
+   * que comprueban un 401 lo reciben tal cual.
+   */
+  autoRefresh = false;
 
   private constructor(
     readonly context: APIRequestContext,
@@ -122,11 +139,22 @@ export class ApiClient {
 
   /** Petición sin lanzar: devuelve estado, `data` o `error` del envoltorio y cabeceras. */
   async raw<T = unknown>(method: string, path: string, options: RequestOptions = {}): Promise<ApiResult<T>> {
+    // La clave de idempotencia se fija una vez: la repetición tras renovar la sesión es la misma operación.
+    const fixed: RequestOptions =
+      options.idempotencyKey === true ? { ...options, idempotencyKey: randomUUID() } : options;
+    const result = await this.send<T>(method, path, fixed);
+    if (result.status !== 401 || !this.autoRefresh || !this.accessToken || path.startsWith("/v1/auth/")) return result;
+    const renewed = await this.refresh();
+    return renewed.ok ? this.send<T>(method, path, fixed) : result;
+  }
+
+  private async send<T>(method: string, path: string, options: RequestOptions): Promise<ApiResult<T>> {
     const runId = process.env.E2E_RUN_ID ?? "e2e";
     const headers: Record<string, string> = {
       "X-Correlation-ID": `${runId}-${String(++correlation).padStart(4, "0")}`,
       ...options.headers,
     };
+    if (typeof options.idempotencyKey === "string") headers["Idempotency-Key"] = options.idempotencyKey;
     if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
     const params = options.query
       ? Object.fromEntries(
@@ -208,8 +236,8 @@ export class ApiClient {
     return this.call<T>("GET", path, { query });
   }
 
-  post<T = unknown>(path: string, body: unknown = {}) {
-    return this.call<T>("POST", path, { body });
+  post<T = unknown>(path: string, body: unknown = {}, options: Pick<RequestOptions, "idempotencyKey"> = {}) {
+    return this.call<T>("POST", path, { body, ...options });
   }
 
   patch<T = unknown>(path: string, body: unknown) {

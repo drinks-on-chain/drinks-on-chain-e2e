@@ -31,6 +31,12 @@ export interface AppDef {
 
 const common = { NEXT_PUBLIC_MOCKS: "0", API_ORIGIN };
 
+/**
+ * `E2E_ERP_TOKENIZATION=1`: el ERP se construye con `NEXT_PUBLIC_ERP_TOKENIZATION=1` (pestaña
+ * «Tokenización» del lote, solicitudes y bloque del panel). Lo exige el recorrido H3.
+ */
+export const ERP_TOKENIZATION = process.env.E2E_ERP_TOKENIZATION === "1";
+
 export const APPS: Record<AppName, AppDef> = {
   erp: {
     name: "erp",
@@ -38,10 +44,14 @@ export const APPS: Record<AppName, AppDef> = {
     urlVar: "E2E_URL_ERP",
     port: 3102,
     enabledByDefault: true,
-    // H0 y el recorrido de H2 por la interfaz del ERP (que termina en el visor del Marketplace).
-    specs: /(h0-.*|h2-recorrido)\.spec\.ts$/,
+    // H0, el recorrido de H2 por la interfaz del ERP (que termina en el visor del Marketplace) y
+    // el de H3, que empieza con la dueña en el ERP y sigue en el Backoffice y el visor.
+    specs: /(h0-.*|h2-recorrido|h3-.*)\.spec\.ts$/,
     readyPath: "/login",
-    buildEnv: () => ({ ...common }),
+    // La tokenización del ERP va detrás de una bandera hasta el cierre de la Ola 3: se construye
+    // con ella solo si se pide (E2E_ERP_TOKENIZATION=1), para que H0–H2 sigan viendo el ERP de
+    // siempre contra un backend que aún no tenga las rutas de la ola.
+    buildEnv: () => ({ ...common, ...(ERP_TOKENIZATION ? { NEXT_PUBLIC_ERP_TOKENIZATION: "1" } : {}) }),
   },
   backoffice: {
     name: "backoffice",
@@ -59,8 +69,8 @@ export const APPS: Record<AppName, AppDef> = {
     urlVar: "E2E_URL_MARKETPLACE",
     port: 3104,
     enabledByDefault: true,
-    // El visor del pasaporte (H2) y, en las Olas 3–4, la tokenización y la compra.
-    specs: /(h2-pasaporte|h[34]-.*)\.spec\.ts$/,
+    // El visor del pasaporte (H2) y, en la Ola 4, la compra.
+    specs: /(h2-pasaporte|h4-.*)\.spec\.ts$/,
     // Sitio público sin sesión: no tiene /login.
     readyPath: "/",
     // Sin PROXY_SHARED_SECRET: el proxy de la app no firma la IP del visitante y el límite del

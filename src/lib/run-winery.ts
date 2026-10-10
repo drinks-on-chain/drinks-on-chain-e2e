@@ -5,7 +5,7 @@ import { runTaxId } from "./run-id";
 
 // Bodega propia de una ejecución, preparada por la API (CLAUDE.md, "Limpieza de datos"): alta
 // directa por la plataforma, dueña y equipo que aceptan su invitación desde el buzón, parcelas y
-// lotes de singani listos para embotellar. Lo usan los recorridos de H2; la limpieza
+// lotes de singani listos para embotellar. Lo usan los recorridos de H2 y H3; la limpieza
 // (`src/lib/cleanup.ts`) bloquea las cuentas y revoca la bodega al terminar.
 
 export interface RunPerson {
@@ -185,3 +185,129 @@ export const SMALL_BOTTLING = {
   finalAlcoholAbv: 40,
   waterDilutionLiters: 7.5,
 } as const;
+
+/** Caso del contrato de la Ola 2 §18: 18.400 kg → 12.100 L → corazón de 1.500 L al 60 % → 2.950 botellas. */
+export const FULL_BOTTLING = {
+  packagingFormatCl: 75,
+  totalBottlesPackaged: 2950,
+  finalAlcoholAbv: 40,
+  waterDilutionLiters: 750,
+} as const;
+
+export interface BottledLot {
+  lotCode: string;
+  bottles: number;
+  harvestId: string;
+  productionId: string;
+}
+
+/**
+ * Lleva un lote singani **ya creado** (en origen, con su estimación) hasta el embotellado, por la
+ * API y con una sola sesión (dirección o enología), con fechas pasadas para que el reposo de 180
+ * días ya esté cumplido: pesaje de 18.400 kg hace 205 días, análisis de madurez y dictamen →
+ * tanque de 12.100 L, una lectura y fermentación completa con destino singani → destilación cerrada hace 185
+ * días (cabezas 120, corazón 1.500 al 60 %, colas 210) → 2.950 botellas de 75 cL al 40 %.
+ */
+export async function bottleSinganiLot(
+  member: ApiClient,
+  options: { lotId: string; parcelId: string; tankCode: string },
+): Promise<BottledLot> {
+  const { lotId } = options;
+  const harvest = await member.post<{ id: string }>("/v1/harvest-batches", {
+    lotId,
+    terroirId: options.parcelId,
+    intakeDate: daysAgo(205),
+    grossWeightKg: 18500,
+    tareWeightKg: 100,
+    temperatureAtIntakeC: 18,
+  });
+  await member.post(`/v1/harvest-batches/${harvest.id}/maturity-analyses`, {
+    brixDegrees: 23.5,
+    ph: 3.5,
+    acidityGl: 5.8,
+    measuredAt: `${daysAgo(205)}T15:00:00Z`,
+  });
+  await member.post(`/v1/harvest-batches/${harvest.id}/phyto-decisions`, {
+    decision: "APPROVED",
+    decidedAt: `${daysAgo(204)}T12:00:00Z`,
+  });
+  const tank = await member.post<{ id: string }>("/v1/fermentation-tanks", {
+    inputs: [{ harvestBatchId: harvest.id }],
+    tankCode: options.tankCode,
+    capacityLiters: 15000,
+    volumeFilledLiters: 12100,
+    startDate: `${daysAgo(204)}T14:00:00Z`,
+  });
+  await member.post(`/v1/fermentation-tanks/${tank.id}/start`, { startedAt: `${daysAgo(203)}T08:00:00Z` });
+  await member.post(`/v1/fermentation-tanks/${tank.id}/logs`, {
+    temperatureCelsius: 23.8,
+    specificGravity: 1.05,
+    recordedAt: `${daysAgo(202)}T09:00:00Z`,
+  });
+  await member.post(`/v1/fermentation-tanks/${tank.id}/complete`, {
+    endDate: daysAgo(195),
+    finalVolumeLiters: 12100,
+    destination: "SINGANI_DIST",
+  });
+  const production = await member.post<{ id: string }>("/v1/production-batches/distillation", {
+    fermentationTankId: tank.id,
+    equipmentIdentifier: `Alambique ${options.tankCode}`,
+    processStartDate: daysAgo(194),
+    inputVolumeLiters: 12100,
+  });
+  const closed = await member.post<{ lock: { released: boolean } }>(`/v1/production-batches/${production.id}/close`, {
+    processEndDate: daysAgo(185),
+    cuts: { headsLiters: 120, heartLiters: 1500, tailsLiters: 210 },
+    heartAbvPercent: 60,
+  });
+  if (!closed.lock.released) throw new Error("El reposo del lote no quedó cumplido tras cerrar la destilación");
+  const bottled = await member.post<{ lotCode: string; bottleCodes: { total: number; active: number } }>(
+    `/v1/lots/${lotId}/bottling`,
+    { ...FULL_BOTTLING, bottlingDate: daysAgo(2) },
+  );
+  return {
+    lotCode: bottled.lotCode,
+    bottles: bottled.bottleCodes.active,
+    harvestId: harvest.id,
+    productionId: production.id,
+  };
+}
+
+/**
+ * Laboratorio conforme (con su informe subido a la bodega) y cierre del expediente de un lote
+ * embotellado: el lote queda `CERTIFIED` con su huella; desde la Ola 3, el worker lo ancla.
+ */
+export async function certifyLot(
+  member: ApiClient,
+  options: { lotId: string; runId: string; laboratoryName: string },
+): Promise<{ hash: string; merkleRoot: string }> {
+  const suffix = options.runId.split("-").at(-1) ?? options.runId;
+  const laboratoryReportKey = await member.upload(
+    {
+      name: `informe-${options.runId}.pdf`,
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4\n%E2E informe de laboratorio\n"),
+    },
+    "lab-reports",
+  );
+  await member.post(`/v1/lots/${options.lotId}/lab-analyses`, {
+    certifiedLaboratoryName: options.laboratoryName,
+    accreditedLabCertificationCode: `LAB-E2E-${suffix}`,
+    testPerformedAt: daysAgo(1),
+    actualAlcoholAbv: 40.05,
+    totalAcidityTartaricGl: 4.8,
+    volatileAcidityAceticGl: 0.22,
+    copperContentMgL: 0.02,
+    methanolMg100mlAa: 12,
+    laboratoryReportKey,
+  });
+  const closed = await member.post<{
+    status: string;
+    hash: string | null;
+    bottleCodes: { merkleRoot: string } | null;
+  }>(`/v1/lots/${options.lotId}/dossier/close`, { confirm: true });
+  if (closed.status !== "CLOSED" || !closed.hash || !closed.bottleCodes) {
+    throw new Error(`El expediente no quedó cerrado con huella (estado ${closed.status})`);
+  }
+  return { hash: closed.hash, merkleRoot: closed.bottleCodes.merkleRoot };
+}
