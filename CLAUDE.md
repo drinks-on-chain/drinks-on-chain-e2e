@@ -40,6 +40,9 @@ Pruebas entre aplicaciones de Drinks on Chain contra un entorno **compartido** (
 - Selectores accesibles (`getByRole`, `getByLabel`, textos en español de las apps); sin `waitForTimeout` salvo para el paso del TOTP (`freshTotp`).
 - `trackErrors(page, esperados)` en cada página y `expect(errors).toEqual([])` al final: los 4xx provocados se declaran como esperados.
 - Un recorrido que depende de rutas aún no desplegadas se marca `test.fixme` **detectándolo** con `missingRoutes()` (OpenAPI de `/docs-json`), con el mensaje "requiere <tarea> desplegado".
+- Lo que confirma la red (identidad, emisión, anclaje, conciliación) se espera con `pollUntil` (`src/lib/poll.ts`) y las utilidades de `src/lib/tokenization.ts`: tope generoso, mensaje con el último valor leído y corte inmediato si el estado es `FAILED`. Nunca una pausa fija.
+- Lectura de la red Stellar (`src/lib/stellar.ts`): solo lectura, **sin claves ni semillas** (simulación y `getTransaction` por el RPC de `E2E_STELLAR_RPC_URL`), y solo con las direcciones públicas que devuelve la API. La suite nunca firma ni envía transacciones, y ningún host del explorador va escrito en una prueba: el enlace es el `explorerUrl` del backend.
+- Un recorrido con la cadena crea su bodega (con su cuenta y su contrato en testnet) y la revoca al terminar; no usa las bodegas de la semilla. `Idempotency-Key` donde el OpenAPI la exige: `idempotencyKey: true` en `ApiClient`.
 - Puertas antes de integrar: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm format:check` y el recorrido afectado en local contra desarrollo.
 
 ## Git
