@@ -69,6 +69,8 @@ const BOTTLES = 2950;
 const REGION = "Valle de Cinti";
 const PARCEL = "Parcela Alta";
 const LAB_NAME = "Laboratorio E2E ISO 17025";
+/** Etapas de un lote con el expediente cerrado: certificado o, ya anclado en la red, `ANCHORED`. */
+const CLOSED_STAGES = ["CERTIFIED", "ANCHORED"];
 /** Botella que se abre en el visor y botella que se anula (otra, para no leer nada cacheado). */
 const SERIAL = 1234;
 const VOIDED_SERIAL = 9;
@@ -107,7 +109,13 @@ interface PublicLot {
   stage: string;
   winery: { slug: string; tradeName: string; region: string; active: boolean };
   timeline: { type: string; summary: string; actorRole: string | null }[];
-  dossier: { status: string; hash: string | null; closedAt: string | null; canonicalUrl: string | null };
+  dossier: {
+    status: string;
+    hash: string | null;
+    closedAt: string | null;
+    canonicalUrl: string | null;
+    anchor?: { status: string } | null;
+  };
 }
 
 interface PublicBottle {
@@ -460,10 +468,16 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       hash = closed.hash ?? "";
       merkleRoot = closed.bottleCodes?.merkleRoot ?? "";
       expect(hash).toMatch(/^[0-9a-f]{64}$/);
-      expect((await enologist.get<Lot>(`/v1/lots/${lotId}`)).stage).toBe("CERTIFIED");
+      // Desde la Ola 3, el worker ancla el expediente cerrado y el lote pasa de CERTIFIED a ANCHORED.
+      expect(CLOSED_STAGES, "etapa del lote con el expediente cerrado").toContain(
+        (await enologist.get<Lot>(`/v1/lots/${lotId}`)).stage,
+      );
       test
         .info()
-        .annotations.push({ type: "lote", description: `${lotCode} · CERTIFIED en la bodega de la ejecución` });
+        .annotations.push({
+          type: "lote",
+          description: `${lotCode} · expediente cerrado en la bodega de la ejecución`,
+        });
     });
 
     await test.step("pasaporte público por la API: huella recalculable y prueba Merkle de la botella", async () => {
@@ -474,7 +488,6 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         name: lotName,
         productType: "SINGANI",
         vintage: year,
-        stage: "CERTIFIED",
         winery: { tradeName, region: REGION, active: true },
         denomination: { applies: true, status: "ELIGIBLE", legalException: false },
         origin: { status: "RECORDED", terroirs: [{ parcelName: PARCEL, altitudeMasl: 2350, variety: VARIETY }] },
@@ -485,8 +498,13 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
         bottling: { status: "RECORDED", bottles: BOTTLES, formatCl: 75, finalAbv: 40 },
         lab: { status: "CONFORMING", laboratoryName: LAB_NAME },
         corrections: { count: 0 },
-        dossier: { status: "CLOSED", hash, anchor: null },
+        dossier: { status: "CLOSED", hash },
       });
+      // El anclaje en la red (Ola 3) no es de este recorrido: sin anclaje, pendiente o confirmado.
+      expect(CLOSED_STAGES, "etapa pública del lote con el expediente cerrado").toContain(passport.stage);
+      expect([null, "PENDING", "ANCHORED"], "anclaje público del expediente").toContain(
+        passport.dossier.anchor?.status ?? null,
+      );
       expect(passport.timeline.map((e) => e.type)).toEqual(
         expect.arrayContaining([
           "HARVEST_WEIGHED",
@@ -566,7 +584,11 @@ test.describe("H2 · pasaporte público en el visor del Marketplace", () => {
       await expect(dossier.getByText(/^Expediente cerrado el \d{1,2} \S+ \d{4}$/)).toBeVisible();
       await expect(dossier.getByTitle(hash)).toHaveText(`${hash.slice(0, 8)}…${hash.slice(-8)}`);
       await expect(dossier.getByRole("button", { name: "Descargar expediente" })).toBeVisible();
-      await expect(dossier).toContainText("Anclaje en la red: pendiente");
+      // El anclaje tiene su sección desde la Ola 3: pendiente mientras la red no lo confirme (o
+      // con la cadena sin configurar) y «Anclado el…» después. Lo comprueba el recorrido de H3.
+      await expect(page.getByRole("region", { name: "Anclaje en la red", exact: true })).toContainText(
+        /Anclaje en la red: pendiente|Anclado/,
+      );
 
       // Origen y Denominación de Origen, con las reglas de la instantánea.
       const origin = section(page, "Origen");

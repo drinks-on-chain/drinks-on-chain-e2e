@@ -646,12 +646,10 @@ test.describe("H2 · del lote a la botella por el ERP, con el pasaporte en el Ma
       expect(closed.status()).toBeLessThan(300);
       await expect(enologist.getByText("Huella (SHA-256)")).toBeVisible({ timeout: 20_000 });
       await expect(enologist.getByText(/Raíz Merkle de los 2\.950 códigos de botella/)).toBeVisible();
-      hash = (
-        (await enologist
-          .getByTitle(/^[0-9a-f]{64}$/)
-          .first()
-          .textContent()) ?? ""
-      ).trim();
+      // La huella va entera en la ficha (`ChainAddress` sin abreviar desde la Ola 3).
+      const shown = enologist.getByTestId("dossier-hash");
+      await expect(shown).toContainText(/[0-9a-f]{64}/, { timeout: 20_000 });
+      hash = /[0-9a-f]{64}/.exec((await shown.textContent()) ?? "")?.[0] ?? "";
       expect(hash).toMatch(/^[0-9a-f]{64}$/);
 
       await enologist.getByRole("tab", { name: "Correcciones" }).click();
@@ -690,14 +688,13 @@ test.describe("H2 · del lote a la botella por el ERP, con el pasaporte en el Ma
 
     await test.step("Marketplace · /b/{lotCode}: el lote del ERP con su bodega, D.O., elaboración, laboratorio conforme y expediente cerrado con la huella", async () => {
       // El pasaporte público, por la API: los mismos datos que se registraron en el ERP.
-      const passport = await visitor.get<{ timeline: { actorRole: string | null }[] }>(
+      const passport = await visitor.get<{ stage: string; timeline: { actorRole: string | null }[] }>(
         `/v1/public/passports/${lotCode}`,
       );
       expect(passport).toMatchObject({
         kind: "LOT",
         lotCode,
         name: LOT,
-        stage: "CERTIFIED",
         winery: { tradeName, active: true },
         denomination: { status: "ELIGIBLE" },
         harvest: { phytosanitary: "APPROVED", maturity: { brixDegrees: 23.4, ph: 3.4, acidityGl: 5.9 } },
@@ -706,6 +703,8 @@ test.describe("H2 · del lote a la botella por el ERP, con el pasaporte en el Ma
         lab: { status: "CONFORMING" },
         dossier: { status: "CLOSED", hash },
       });
+      // Desde la Ola 3, el expediente cerrado se ancla en la red y el lote pasa a ANCHORED.
+      expect(["CERTIFIED", "ANCHORED"], "etapa pública del lote con el expediente cerrado").toContain(passport.stage);
       expect([...new Set(passport.timeline.map((e) => e.actorRole))]).toEqual(
         expect.arrayContaining(["OPERATOR", "AGRONOMIST", "ENOLOGIST"]),
       );

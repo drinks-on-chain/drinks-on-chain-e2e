@@ -78,9 +78,10 @@ const TASTING_NOTES = "Nariz floral de moscatel; boca limpia y sedosa, de final 
 /** Contraseña de las personas que crea la ejecución (≥ 10 caracteres, no común). */
 const NEW_PASSWORD = runPassword();
 
-/** Códigos de un error de la API: el general y los de sus detalles (reglas `TOK_…`). */
-const errorCodes = (result: ApiResult<unknown>) =>
-  [result.error?.code, ...(result.error?.details ?? []).map((d) => d.code)].filter((c): c is string => !!c);
+/** Códigos de un error de la API, sin repetir: el general y los de sus detalles (reglas `TOK_…`). */
+const errorCodes = (result: ApiResult<unknown>) => [
+  ...new Set([result.error?.code, ...(result.error?.details ?? []).map((d) => d.code)].filter((c): c is string => !!c)),
+];
 
 const requestPanel = (page: Page) => page.getByRole("group", { name: "Solicitud de tokenización" });
 const collectionPanel = (page: Page) => page.getByRole("group", { name: "Colección y emisión" });
@@ -511,10 +512,8 @@ test.describe("H3 · tokenización en testnet: de la autorización al anclaje ve
         body: { quantity: 10, confirm: true },
         idempotencyKey: true,
       });
-      expect({ status: again.status, codes: errorCodes(again) }).toEqual({
-        status: 409,
-        codes: ["TOK_REQUEST_ALREADY_OPEN"],
-      });
+      expect(again.status, `segunda solicitud abierta (${errorCodes(again).join(", ")})`).toBe(409);
+      expect(errorCodes(again)).toContain("TOK_REQUEST_ALREADY_OPEN");
 
       // La enóloga consulta la tokenización, pero no la autoriza: ni botón, ni formulario, ni API.
       const enologist = await openApp("erp");
@@ -820,7 +819,7 @@ test.describe("H3 · tokenización en testnet: de la autorización al anclaje ve
       const lower = await ownerApi.raw("PATCH", `/v1/lots/${lotId}`, {
         body: { estimatedBottles: TOTAL - 30, reason: `${reason}: la cosecha rindió menos` },
       });
-      expect({ status: lower.status, codes: errorCodes(lower) }).toMatchObject({ status: 422 });
+      expect(lower.status, `estimación por debajo de lo emitido (${errorCodes(lower).join(", ")})`).toBe(422);
       expect(errorCodes(lower)).toContain("TOK_ESTIMATE_BELOW_MINTED");
       expect((await ownerApi.get<{ estimatedBottles: number }>(`/v1/lots/${lotId}`)).estimatedBottles).toBe(ESTIMATE);
     });
