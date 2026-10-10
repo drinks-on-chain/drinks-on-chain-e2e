@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       specs:
-        description: "Recorridos (filtro de Playwright: h0-, h1-, h2-, h2-pasaporte, h2-recorrido, 'h0- h1-'; vacío = todos)"
+        description: "Recorridos (filtro de Playwright: h0-, h1-, h2-, h2-pasaporte, h2-recorrido, h3-, 'h0- h1-'; vacío = todos)"
         required: false
         default: "h0-"
       erp_ref:
@@ -69,6 +69,11 @@ jobs:
       E2E_API_ORIGIN: ${{ inputs.api_origin || github.event.client_payload.api_origin || 'https://136.243.223.39.sslip.io' }}
       E2E_MAILPIT_SSH: e2e-mailpit
       E2E_MAILPIT_SSH_MODE: api
+      # H3 lee la red por su cuenta (solo lectura, sin claves): RPC público de testnet salvo que
+      # la variable del repo indique otro. No es un secreto.
+      E2E_STELLAR_RPC_URL: ${{ vars.E2E_STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org' }}
+      # Tope de cada espera a la red en H3 (ms); vacío = 240000.
+      E2E_CHAIN_WAIT_MS: ${{ vars.E2E_CHAIN_WAIT_MS || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -94,9 +99,10 @@ jobs:
         run: |
           echo "E2E_RUN_ID=e2e-$(date -u +%Y%m%dt%H%M)-${GITHUB_RUN_ID: -6}" >> "$GITHUB_ENV"
           # Apps de cada recorrido: H0, el ERP; H1, ERP y Backoffice; el pasaporte de H2, el
-          # Marketplace; el recorrido de H2, ERP y Marketplace. Sin filtro o con un filtro que no
-          # se conoce (p. ej. `h2-`), todas.
+          # Marketplace; el recorrido de H2, ERP y Marketplace; H3, las tres. Sin filtro o con un
+          # filtro que no se conoce (p. ej. `h2-`), todas.
           apps=""
+          h3=0
           add() { case ",$apps," in *",$1,"*) ;; *) apps="${apps:+$apps,}$1" ;; esac; }
           for spec in ${SPECS:-todos}; do
             case "$spec" in
@@ -104,11 +110,26 @@ jobs:
               h1-*) add erp; add backoffice ;;
               h2-pasaporte*) add marketplace ;;
               h2-recorrido*) add erp; add marketplace ;;
-              *) add erp; add backoffice; add marketplace ;;
+              h3-*) add erp; add backoffice; add marketplace; h3=1 ;;
+              *) add erp; add backoffice; add marketplace; h3=1 ;;
             esac
           done
           echo "E2E_APPS=$apps" >> "$GITHUB_ENV"
           echo "Apps: $apps"
+          # H3 necesita el ERP construido con la tokenización (NEXT_PUBLIC_ERP_TOKENIZATION=1, la
+          # pone scripts/apps.ts con E2E_ERP_TOKENIZATION=1). Solo si el backend ya tiene la Ola 3
+          # con la cadena configurada (su registro público da la cuenta de operaciones): si no,
+          # H3 se marca fixme y H0–H2 ven el ERP de siempre.
+          tokenization=0
+          if [ "$h3" = 1 ]; then
+            if curl -fsS --max-time 30 "$E2E_API_ORIGIN/v1/public/chain/registry" | grep -q '"operationsAccount":"G'; then
+              tokenization=1
+            else
+              echo "El backend aún no tiene la Ola 3 con la cadena configurada: H3 quedará como fixme."
+            fi
+          fi
+          echo "E2E_ERP_TOKENIZATION=$tokenization" >> "$GITHUB_ENV"
+          echo "ERP con tokenización: $tokenization"
 
       - name: Llave del buzón (Mailpit, comando forzado)
         if: env.CLEANUP_RUN_IDS == ''
@@ -160,7 +181,7 @@ jobs:
           {
             echo "### E2E · $E2E_RUN_ID"
             echo ""
-            echo "- Recorridos: \`${SPECS:-todos}\` · apps: \`$E2E_APPS\`"
+            echo "- Recorridos: \`${SPECS:-todos}\` · apps: \`$E2E_APPS\` · ERP con tokenización: \`${E2E_ERP_TOKENIZATION:-0}\`"
             echo "- ERP \`$E2E_REF_ERP\` · Backoffice \`$E2E_REF_BACKOFFICE\` · Marketplace \`$E2E_REF_MARKETPLACE\` · backend \`$E2E_API_ORIGIN\`"
             echo ""
             if [ -f e2e-summary/resumen.md ]; then cat e2e-summary/resumen.md; fi
