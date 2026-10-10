@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { paceLogin } from "./login-pace";
+import { freshTotp } from "./totp";
 
 // Utilidades de página comunes a las apps (todas nacen de la misma plantilla: shell, menú de
 // usuario, login y sesión por cookie).
@@ -52,3 +53,22 @@ export async function logout(page: Page) {
   await page.getByRole("menuitem", { name: "Cerrar sesión" }).click();
   await expect(page).toHaveURL(/\/login$/);
 }
+
+/** Entra al ERP y espera el panel con la etiqueta del menú de usuario (`<Rol> · <Bodega>`). */
+export async function erpLogin(page: Page, email: string, password: string, shellLabel: string) {
+  await fillLogin(page, email, password);
+  await expect(page.getByText("Tareas pendientes", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(shellUser(page)).toContainText(shellLabel);
+}
+
+/** Entra al back office con el segundo factor (código generado con el secreto de la persona). */
+export async function backofficeLogin(page: Page, email: string, password: string, totpSecret: string) {
+  await fillLogin(page, email, password);
+  await expect(page.getByRole("heading", { name: "Verificación en dos pasos" })).toBeVisible();
+  await page.getByLabel("Código de verificación").fill(await freshTotp(totpSecret));
+  await expect(page.getByRole("heading", { name: "Tablero", level: 1 })).toBeVisible();
+}
+
+/** Enlace de navegación principal del ERP. */
+export const erpNav = (page: Page, name: string) =>
+  page.getByRole("navigation", { name: "Navegación principal" }).getByRole("link", { name, exact: true }).click();
